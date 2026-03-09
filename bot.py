@@ -249,6 +249,61 @@ def _verify_input_fields(driver, bot_name, passcode):
         return False
 
 
+def _dismiss_gates(driver, bot_id):
+    """Click through cookie banners, disclaimers, and other pre-join dialogs."""
+    # 1. Accept cookies (OneTrust banner)
+    _COOKIE_ACCEPT = [
+        (By.ID, "onetrust-accept-btn-handler"),
+        (By.CSS_SELECTOR, "#onetrust-accept-btn-handler"),
+        (By.CSS_SELECTOR, ".onetrust-close-btn-handler"),
+        (By.XPATH, "//button[contains(text(), 'Accept All')]"),
+        (By.XPATH, "//button[contains(text(), 'Accept Cookies')]"),
+        (By.XPATH, "//button[contains(@id, 'accept')]"),
+    ]
+    for by, sel in _COOKIE_ACCEPT:
+        try:
+            btn = driver.find_element(by, sel)
+            if btn.is_displayed():
+                btn.click()
+                log.info("Bot %d: Accepted cookies.", bot_id + 1)
+                time.sleep(1)
+                break
+        except Exception:
+            continue
+
+    # 2. Accept Zoom disclaimer / terms of service (use JS click — may be behind overlay)
+    try:
+        btn = driver.find_element(By.ID, "disclaimer_agree")
+        driver.execute_script("arguments[0].click();", btn)
+        log.info("Bot %d: Accepted disclaimer.", bot_id + 1)
+        time.sleep(2)
+    except Exception:
+        # Fallback: try text-based selectors
+        for by, sel in [
+            (By.XPATH, "//button[contains(text(), 'Agree')]"),
+            (By.XPATH, "//button[contains(text(), 'Accept')]"),
+        ]:
+            try:
+                btn = driver.find_element(by, sel)
+                driver.execute_script("arguments[0].click();", btn)
+                log.info("Bot %d: Accepted disclaimer (fallback).", bot_id + 1)
+                time.sleep(2)
+                break
+            except Exception:
+                continue
+
+    # 3. Handle "Continue" button (audio/video prompt)
+    try:
+        btn = WebDriverWait(driver, 2).until(
+            EC.element_to_be_clickable((By.CLASS_NAME, "continue"))
+        )
+        btn.click()
+        log.info("Bot %d: Clicked continue.", bot_id + 1)
+        time.sleep(1)
+    except TimeoutException:
+        pass
+
+
 # ── Main bot launcher ───────────────────────────────────────────────────────
 def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name=""):
     """Launch a single bot that joins the given Zoom meeting.
@@ -270,16 +325,12 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name=""):
             # Wait for page to fully load (Zoom SPA needs time)
             time.sleep(5)
 
-            # Handle optional "Continue without audio/video" or cookie dialogs
-            try:
-                driver.switch_to.default_content()
-                continue_btn = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CLASS_NAME, "continue"))
-                )
-                continue_btn.click()
-                time.sleep(1)
-            except TimeoutException:
-                pass
+            # ── Dismiss pre-join gates (cookies, disclaimer, etc.) ──────
+            driver.switch_to.default_content()
+            _dismiss_gates(driver, bot_id)
+
+            # Wait for the web client to load after dismissing gates
+            time.sleep(3)
 
             # Switch into the correct frame (main doc or iframe)
             if not _switch_to_zoom_content(driver, bot_id):
