@@ -312,7 +312,7 @@ def _dismiss_gates(driver, bot_id):
 
 # ── Main bot launcher ───────────────────────────────────────────────────────
 def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
-               stop_event=None, proxies=None):
+               stop_event=None, proxies=None, chat_message=""):
     """Launch a single bot that joins the given Zoom meeting.
 
     Returns (driver, elapsed_seconds) on success or (None, elapsed_seconds) on failure.
@@ -438,6 +438,11 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
 
             elapsed = time.monotonic() - t_start
             log.info("Bot %d joined! (%.1fs)", bot_id + 1, elapsed)
+
+            # ── Send chat message if configured ─────────────────────
+            if chat_message and driver:
+                send_chat_message(driver, bot_id, chat_message)
+
             return (driver, elapsed)
 
         except Exception as exc:
@@ -463,6 +468,90 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
 
     elapsed = time.monotonic() - t_start
     return (None, elapsed)
+
+
+# ── Chat message ──────────────────────────────────────────────────────────
+_CHAT_BTN_SELECTORS = [
+    (By.CSS_SELECTOR, "button[aria-label*='chat' i]"),
+    (By.CSS_SELECTOR, "button[aria-label*='Chat' i]"),
+    (By.XPATH, "//button[contains(@class, 'footer-button__chat')]"),
+    (By.XPATH, "//button[contains(text(), 'Chat')]"),
+    (By.CSS_SELECTOR, "button.footer__chat-btn"),
+]
+_CHAT_INPUT_SELECTORS = [
+    (By.CSS_SELECTOR, "textarea[aria-label*='chat' i]"),
+    (By.CSS_SELECTOR, "textarea[aria-label*='message' i]"),
+    (By.CSS_SELECTOR, "textarea[placeholder*='message' i]"),
+    (By.CSS_SELECTOR, "div[contenteditable='true'][aria-label*='chat' i]"),
+    (By.CSS_SELECTOR, "div[contenteditable='true'][aria-label*='message' i]"),
+    (By.CSS_SELECTOR, ".chat-box__chat-textarea textarea"),
+    (By.CSS_SELECTOR, "#wc-container-right textarea"),
+]
+_CHAT_SEND_SELECTORS = [
+    (By.CSS_SELECTOR, "button[aria-label*='send' i]"),
+    (By.CSS_SELECTOR, "button.chat-box__send-btn"),
+    (By.XPATH, "//button[contains(@class, 'send')]"),
+]
+
+
+def send_chat_message(driver, bot_id, message):
+    """Open the chat panel and send a message after joining.
+
+    Returns True if the message was sent, False otherwise.
+    """
+    try:
+        driver.switch_to.default_content()
+
+        # Switch into Zoom iframe if needed
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        for iframe in iframes:
+            try:
+                driver.switch_to.frame(iframe)
+                if _find_element_multi(driver, _CHAT_BTN_SELECTORS):
+                    break
+                driver.switch_to.default_content()
+            except Exception:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        # Step 1: Open chat panel
+        chat_btn = _find_element_multi(driver, _CHAT_BTN_SELECTORS)
+        if chat_btn:
+            driver.execute_script("arguments[0].click();", chat_btn)
+            log.info("Bot %d: Opened chat panel.", bot_id + 1)
+            time.sleep(1.5)
+        else:
+            log.info("Bot %d: Chat button not found, trying input directly.", bot_id + 1)
+
+        # Step 2: Find the chat input
+        chat_input = None
+        for _ in range(3):
+            chat_input = _find_element_multi(driver, _CHAT_INPUT_SELECTORS)
+            if chat_input:
+                break
+            time.sleep(1)
+
+        if not chat_input:
+            log.warning("Bot %d: Chat input not found, cannot send message.", bot_id + 1)
+            return False
+
+        # Step 3: Type the message
+        chat_input.click()
+        time.sleep(0.3)
+        chat_input.send_keys(message)
+        time.sleep(0.3)
+
+        # Step 4: Send — try Enter key first, then send button
+        from selenium.webdriver.common.keys import Keys
+        chat_input.send_keys(Keys.RETURN)
+        log.info("Bot %d: Sent chat message.", bot_id + 1)
+        return True
+
+    except Exception as exc:
+        log.warning("Bot %d: Failed to send chat message: %s", bot_id + 1, exc)
+        return False
 
 
 # ── Leave-meeting selectors ────────────────────────────────────────────────

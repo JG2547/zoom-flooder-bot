@@ -183,6 +183,7 @@ class BotManager:
                         custom_name=cfg["custom_name"],
                         stop_event=self._stop_event,
                         proxies=cfg.get("proxies"),
+                        chat_message=cfg.get("chat_message", ""),
                     )] = i
 
                 for future in concurrent.futures.as_completed(futures):

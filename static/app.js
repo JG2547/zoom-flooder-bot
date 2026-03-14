@@ -21,6 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
         threadCount:  document.getElementById("thread-count"),
         numBots:      document.getElementById("num-bots"),
         customName:   document.getElementById("custom-name"),
+        chatMessage:  document.getElementById("chat-message"),
         autoRestart:  document.getElementById("auto-restart"),
         restartDelay: document.getElementById("restart-delay"),
         useProxies:   document.getElementById("use-proxies"),
@@ -135,6 +136,7 @@ document.addEventListener("DOMContentLoaded", () => {
             num_bots:     numBots,
             custom_name:  inputs.customName.value,
             use_proxies:  inputs.useProxies.checked,
+            chat_message: inputs.chatMessage.value,
         };
 
         if (!payload.meeting_id || !payload.passcode) {

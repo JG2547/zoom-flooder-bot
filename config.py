@@ -132,7 +132,7 @@ def get_user_config():
 # ── Programmatic helpers (used by web_app.py) ────────────────────────────────
 
 def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
-                  use_proxies=False):
+                  use_proxies=False, chat_message=""):
     """Build a config dict from explicit values — no input() calls."""
     names = load_names()
 
@@ -162,6 +162,7 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
         "custom_name": str(custom_name).strip(),
         "names_list": names,
         "proxies": proxies,
+        "chat_message": str(chat_message).strip() if chat_message else "",
     }
 
 
