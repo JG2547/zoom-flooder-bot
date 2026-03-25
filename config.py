@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 
+import concurrent.futures
 import logging
 import os
 import sys
+import time
+import urllib.request
 
 log = logging.getLogger(__name__)
 
@@ -132,7 +135,10 @@ def get_user_config():
 # ── Programmatic helpers (used by web_app.py) ────────────────────────────────
 
 def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
-                  use_proxies=False, chat_recipient="", chat_message=""):
+                  use_proxies=False, chat_recipient="", chat_message="",
+                  waiting_room_timeout=60, reactions=None, reaction_count=0,
+                  reaction_delay=1.0, persist_mode=False, persist_interval=30,
+                  persist_chat_interval=0, persist_reaction_interval=0):
     """Build a config dict from explicit values — no input() calls."""
     names = load_names()
 
@@ -164,6 +170,14 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
         "proxies": proxies,
         "chat_recipient": str(chat_recipient).strip() if chat_recipient else "",
         "chat_message": str(chat_message).strip() if chat_message else "",
+        "waiting_room_timeout": max(10, int(waiting_room_timeout)),
+        "reactions": reactions or [],
+        "reaction_count": max(0, int(reaction_count)),
+        "reaction_delay": max(0.1, float(reaction_delay)),
+        "persist_mode": bool(persist_mode),
+        "persist_interval": max(5, int(persist_interval)),
+        "persist_chat_interval": max(0, int(persist_chat_interval)),
+        "persist_reaction_interval": max(0, int(persist_reaction_interval)),
     }
 
 
@@ -188,3 +202,36 @@ def get_defaults_dict():
         "meeting_id": mid,
         "passcode": pwd,
     }
+
+
+# ── Proxy health checking ──────────────────────────────────────────────────
+
+def _test_one_proxy(proxy, timeout=5):
+    """Test a single proxy. Returns (proxy, ok, latency_ms)."""
+    handler = urllib.request.ProxyHandler({"https": proxy, "http": proxy})
+    opener = urllib.request.build_opener(handler)
+    t0 = time.monotonic()
+    try:
+        opener.open("https://zoom.us", timeout=timeout)
+        latency = int((time.monotonic() - t0) * 1000)
+        return (proxy, True, latency)
+    except Exception:
+        return (proxy, False, 0)
+
+
+def check_proxy_health(proxies, timeout=5, max_workers=10):
+    """Test a list of proxies in parallel.
+
+    Returns {"alive": [...], "dead": [...], "results": {proxy: {"ok": bool, "latency_ms": int}}}.
+    """
+    alive, dead, results = [], [], {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(proxies) or 1)) as pool:
+        futures = {pool.submit(_test_one_proxy, p, timeout): p for p in proxies}
+        for future in concurrent.futures.as_completed(futures):
+            proxy, ok, latency = future.result()
+            results[proxy] = {"ok": ok, "latency_ms": latency}
+            if ok:
+                alive.append(proxy)
+            else:
+                dead.append(proxy)
+    return {"alive": alive, "dead": dead, "results": results}

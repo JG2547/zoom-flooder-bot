@@ -319,6 +319,11 @@ input:disabled {
 .bot-card.failed   { border-color: var(--accent-red); color: var(--accent-red); background: var(--accent-red-dim); }
 .bot-card.leaving  { border-color: var(--accent-yellow); color: var(--accent-yellow); background: var(--accent-yellow-dim); }
 .bot-card.left     { border-color: var(--text-muted); color: var(--text-secondary); background: rgba(107, 113, 144, 0.08); }
+.bot-card.captcha  { border-color: #f97316; color: #f97316; background: rgba(249, 115, 22, 0.12); }
+.bot-card.waiting_room { border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.12); animation: pulse-waiting 2s ease-in-out infinite; }
+.bot-card.disconnected { border-color: var(--accent-red); color: var(--accent-red); background: var(--accent-red-dim); opacity: 0.7; }
+.bot-card.reconnecting { border-color: var(--accent-yellow); color: var(--accent-yellow); background: var(--accent-yellow-dim); animation: pulse-waiting 1.5s ease-in-out infinite; }
+@keyframes pulse-waiting { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* ── Log Feed ──────────────────────────────────────────────────────── */
 .log-header {
@@ -352,6 +357,48 @@ input:disabled {
 .log-line.ERROR   { color: var(--accent-red); }
 .log-line.WARNING { color: var(--accent-yellow); }
 .log-line.INFO    { color: var(--text-secondary); }
+
+/* ── Checkbox Row (reactions) ──────────────────────────────────────── */
+.checkbox-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+}
+.checkbox-row label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] { accent-color: var(--accent-blue); }
+
+/* ── Screenshot Viewer ────────────────────────────────────────────── */
+#screenshot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.6rem;
+}
+.screenshot-thumb {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--bg-card);
+    transition: border-color 0.2s;
+}
+.screenshot-thumb:hover { border-color: var(--accent-blue); }
+.screenshot-thumb img { width: 100%; height: auto; display: block; }
+.screenshot-thumb span {
+    display: block;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* ── Toast Notifications ───────────────────────────────────────────── */
 #toast-container {

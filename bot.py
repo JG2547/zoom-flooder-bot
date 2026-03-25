@@ -122,6 +122,24 @@ _WAITING_ROOM_SELECTORS = [
     (By.XPATH, "//*[contains(text(), \"Please wait, the meeting host\")]"),
 ]
 
+# ── Captcha / challenge detection ─────────────────────────────────────────
+_CAPTCHA_SELECTORS = [
+    (By.CSS_SELECTOR, "iframe[src*='recaptcha']"),
+    (By.CSS_SELECTOR, "iframe[src*='captcha']"),
+    (By.CSS_SELECTOR, "iframe[src*='hcaptcha']"),
+    (By.CSS_SELECTOR, "iframe[src*='challenge']"),
+    (By.CSS_SELECTOR, "iframe[src*='turnstile']"),
+    (By.CSS_SELECTOR, "div[class*='captcha']"),
+    (By.CSS_SELECTOR, "div[class*='challenge']"),
+    (By.CSS_SELECTOR, "#recaptcha"),
+    (By.CSS_SELECTOR, ".g-recaptcha"),
+    (By.CSS_SELECTOR, ".h-captcha"),
+    (By.XPATH, "//*[contains(text(), 'verify you are human')]"),
+    (By.XPATH, "//*[contains(text(), \"I'm not a robot\")]"),
+    (By.XPATH, "//*[contains(text(), 'complete a challenge')]"),
+    (By.XPATH, "//*[contains(text(), 'security check')]"),
+]
+
 
 def _check_join_errors(driver):
     """Return an error message if the page shows a Zoom error banner, else None."""
@@ -130,6 +148,29 @@ def _check_join_errors(driver):
         if elems:
             return elems[0].text
     return None
+
+
+def _check_captcha(driver):
+    """Return True if the page shows a captcha/challenge, else False."""
+    for by, selector in _CAPTCHA_SELECTORS:
+        elems = driver.find_elements(by, selector)
+        if elems:
+            return True
+    # JS fallback: check for hidden recaptcha iframes
+    try:
+        found = driver.execute_script("""
+            var iframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                var src = (iframes[i].src || '').toLowerCase();
+                if (src.indexOf('captcha') !== -1 || src.indexOf('challenge') !== -1 ||
+                    src.indexOf('recaptcha') !== -1 || src.indexOf('hcaptcha') !== -1 ||
+                    src.indexOf('turnstile') !== -1) return true;
+            }
+            return false;
+        """)
+        return bool(found)
+    except Exception:
+        return False
 
 
 # ── Element helpers ─────────────────────────────────────────────────────────
@@ -228,6 +269,93 @@ def _activate_toolbar(driver):
             time.sleep(0.8)
         except Exception:
             pass
+
+
+# ── DOM Selector Auto-Discovery ────────────────────────────────────────────
+_selector_cache = {}
+_selector_cache_lock = threading.Lock()
+
+
+def _discover_selectors(driver, bot_id):
+    """After a successful join, scan the toolbar DOM and cache working selectors.
+
+    This builds a mapping of role -> (By, selector) for chat, leave, and reactions
+    buttons so future bots in the same session can find them immediately.
+    """
+    try:
+        _activate_toolbar(driver)
+        discovered = driver.execute_script("""
+            var result = {};
+            var btns = document.querySelectorAll('button, [role="button"]');
+            for (var i = 0; i < btns.length; i++) {
+                var el = btns[i];
+                if (el.offsetWidth === 0 || el.offsetHeight === 0) continue;
+                var txt = (el.textContent || '').trim().toLowerCase();
+                var al  = (el.getAttribute('aria-label') || '').toLowerCase();
+                var tt  = (el.getAttribute('title') || '').toLowerCase();
+                var tid = el.getAttribute('data-testid') || '';
+                var id  = el.id || '';
+                var cls = (el.className || '').toString();
+
+                // Build a unique selector for this element
+                var sel = null;
+                if (tid) sel = '[data-testid="' + tid + '"]';
+                else if (id) sel = '#' + id;
+                else if (al) sel = '[aria-label="' + al.replace(/"/g, '\\\\"') + '"]';
+
+                if (!sel) continue;
+
+                // Classify by role
+                if (al.indexOf('chat') !== -1 || txt === 'chat')
+                    result['chat_btn'] = sel;
+                else if (al.indexOf('leave') !== -1 || txt === 'leave' || txt.indexOf('leave') !== -1)
+                    result['leave_btn'] = sel;
+                else if (al.indexOf('react') !== -1 || txt === 'reactions' || txt === 'react')
+                    result['reactions_btn'] = sel;
+            }
+
+            // Also look for chat input
+            var inputs = document.querySelectorAll('textarea, [contenteditable="true"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var inp = inputs[i];
+                if (inp.offsetWidth === 0) continue;
+                var ial = (inp.getAttribute('aria-label') || '').toLowerCase();
+                var iph = (inp.placeholder || '').toLowerCase();
+                if (ial.indexOf('chat') !== -1 || ial.indexOf('message') !== -1 ||
+                    iph.indexOf('message') !== -1 || iph.indexOf('type') !== -1) {
+                    if (inp.tagName === 'TEXTAREA')
+                        result['chat_input'] = 'textarea[aria-label="' + (inp.getAttribute('aria-label') || '') + '"]';
+                    else
+                        result['chat_input'] = '[contenteditable="true"][aria-label="' + (inp.getAttribute('aria-label') || '') + '"]';
+                }
+            }
+            return result;
+        """)
+        if discovered:
+            with _selector_cache_lock:
+                for role, sel in discovered.items():
+                    _selector_cache[role] = (By.CSS_SELECTOR, sel)
+            log.info("Bot %d: Auto-discovered %d selectors: %s",
+                     bot_id + 1, len(discovered), list(discovered.keys()))
+    except Exception as exc:
+        log.debug("Bot %d: Selector discovery failed: %s", bot_id + 1, exc)
+
+
+def _get_cached_selectors(role):
+    """Return cached selector as a list of [(By, sel)] if available, else empty list."""
+    with _selector_cache_lock:
+        cached = _selector_cache.get(role)
+    return [cached] if cached else []
+
+
+def _find_element_with_cache(driver, role, fallback_selectors):
+    """Try cached selector first, then fall back to the hardcoded list."""
+    cached = _get_cached_selectors(role)
+    if cached:
+        el = _find_element_multi(driver, cached)
+        if el:
+            return el
+    return _find_element_multi(driver, fallback_selectors)
 
 
 def _has_join_form(driver):
@@ -491,10 +619,14 @@ def _dismiss_gates(driver, bot_id):
 
 # ── Main bot launcher ───────────────────────────────────────────────────────
 def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
-               stop_event=None, proxies=None, chat_recipient="", chat_message=""):
+               stop_event=None, proxies=None, chat_recipient="", chat_message="",
+               status_callback=None, waiting_room_timeout=60,
+               reactions=None, reaction_count=0, reaction_delay=1.0,
+               persist_mode=False):
     """Launch a single bot that joins the given Zoom meeting.
 
     Returns (driver, elapsed_seconds) on success or (None, elapsed_seconds) on failure.
+    Special return values: ("left", elapsed), ("captcha", elapsed).
     """
     driver = None
     t_start = time.monotonic()
@@ -556,6 +688,13 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                     break
 
             if not form_found:
+                # Check if we hit a captcha before the form loaded
+                if _check_captcha(driver):
+                    log.warning("Bot %d: Captcha/challenge detected before join form!", bot_id + 1)
+                    _take_screenshot(driver, bot_id, "captcha_detected")
+                    driver.quit(); driver = None
+                    elapsed = time.monotonic() - t_start
+                    return ("captcha", elapsed)
                 # Dump diagnostics on first failure only
                 if attempt == 0:
                     _debug_dump(driver, bot_id)
@@ -645,12 +784,24 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 elapsed = time.monotonic() - t_start
                 return (None, elapsed)
 
+            # ── Check for captcha / challenge ────────────────────────────
+            if _check_captcha(driver):
+                log.warning("Bot %d: Captcha/challenge detected! Cannot proceed.", bot_id + 1)
+                _take_screenshot(driver, bot_id, "captcha_detected")
+                driver.quit()
+                driver = None
+                elapsed = time.monotonic() - t_start
+                return ("captcha", elapsed)
+
             # ── Check for waiting room ──────────────────────────────────
             in_waiting_room = _find_element_multi(driver, _WAITING_ROOM_SELECTORS)
             if in_waiting_room:
                 log.info("Bot %d: In waiting room, waiting for host admission…", bot_id + 1)
-                # Wait up to 60s for host to admit
-                for _ in range(30):
+                if status_callback:
+                    status_callback(bot_id, "waiting_room")
+                _take_screenshot(driver, bot_id, "waiting_room")
+                wr_polls = max(1, waiting_room_timeout // 2)
+                for _ in range(wr_polls):
                     if _stopped():
                         driver.quit(); driver = None
                         return (None, time.monotonic() - t_start)
@@ -659,7 +810,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                         log.info("Bot %d: Admitted from waiting room.", bot_id + 1)
                         break
                 else:
-                    log.warning("Bot %d: Timed out in waiting room.", bot_id + 1)
+                    log.warning("Bot %d: Timed out in waiting room after %ds.", bot_id + 1, waiting_room_timeout)
 
             # ── Dismiss post-join gates (audio prompt, recording notice) ──
             driver.switch_to.default_content()
@@ -669,13 +820,27 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
             log.info("Bot %d joined! (%.1fs)", bot_id + 1, elapsed)
             _take_screenshot(driver, bot_id, "joined")
 
+            # ── Auto-discover DOM selectors for future bots ───────────
+            _discover_selectors(driver, bot_id)
+
             # ── Send chat message if configured ─────────────────────
             if chat_message and driver:
                 time.sleep(2)  # Let the meeting UI fully render
                 send_chat_message(driver, bot_id, chat_message, chat_recipient)
-                # Auto-leave after sending message
+
+            # ── Send reactions if configured ──────────────────────────
+            if reactions and reaction_count > 0 and driver:
                 time.sleep(1)
-                log.info("Bot %d: Auto-leaving after chat message.", bot_id + 1)
+                spam_reactions(driver, bot_id, reactions, reaction_count, reaction_delay)
+
+            # ── Persist mode: stay in meeting ─────────────────────────
+            if persist_mode and driver:
+                return (driver, elapsed)  # Keep driver alive for persistence loop
+
+            # ── Auto-leave if we did chat or reactions ────────────────
+            if (chat_message or (reactions and reaction_count > 0)) and driver:
+                time.sleep(1)
+                log.info("Bot %d: Auto-leaving after actions.", bot_id + 1)
                 leave_meeting(driver, bot_id + 1)
                 time.sleep(1)
                 try:
@@ -1061,8 +1226,8 @@ def send_chat_message(driver, bot_id, message, recipient=""):
                 except Exception:
                     pass
 
-        # Step 1: Open chat panel — try multiple strategies
-        chat_btn = _find_element_multi(driver, _CHAT_BTN_SELECTORS)
+        # Step 1: Open chat panel — try cached, then hardcoded selectors
+        chat_btn = _find_element_with_cache(driver, "chat_btn", _CHAT_BTN_SELECTORS)
 
         # JS fallback: find any button/element whose text, aria-label, or tooltip
         # contains "chat" — also checks icon-only buttons with nearby labels
@@ -1297,7 +1462,7 @@ def leave_meeting(driver, bot_id):
                     pass
 
         # Step 1: Click the "Leave" button in the meeting toolbar
-        leave_btn = _find_element_multi(driver, _LEAVE_BTN_SELECTORS)
+        leave_btn = _find_element_with_cache(driver, "leave_btn", _LEAVE_BTN_SELECTORS)
 
         # JS fallback: find any button/element with "Leave" text
         if not leave_btn:
@@ -1358,6 +1523,162 @@ def leave_meeting(driver, bot_id):
 
     except Exception as exc:
         log.debug("Bot %d: Error during graceful leave: %s", bot_id, exc)
+        return False
+
+
+# ── Reaction / Emoji ──────────────────────────────────────────────────────
+_REACTION_BTN_SELECTORS = [
+    (By.CSS_SELECTOR, "button[aria-label*='react' i]"),
+    (By.CSS_SELECTOR, "button[aria-label*='reaction' i]"),
+    (By.CSS_SELECTOR, "button[data-testid='reactions-btn']"),
+    (By.CSS_SELECTOR, "button[data-testid='reaction-btn']"),
+    (By.XPATH, "//button[contains(@class, 'reactions')]"),
+    (By.XPATH, "//button[.//span[contains(text(), 'React')]]"),
+    (By.XPATH, "//button[contains(text(), 'React')]"),
+]
+
+# Mapping of reaction names to emoji labels / aria-labels used in Zoom UI
+_REACTION_MAP = {
+    "clap":      ["clap", "applause", "clapping"],
+    "thumbs_up": ["thumbs up", "like", "thumb"],
+    "heart":     ["heart", "love"],
+    "laugh":     ["laugh", "joy", "haha", "funny"],
+    "wow":       ["surprised", "wow", "astonished", "open mouth"],
+    "tada":      ["tada", "party", "celebrate", "confetti"],
+}
+
+
+def send_reaction(driver, bot_id, reaction_type="clap"):
+    """Click a reaction emoji in the Zoom meeting toolbar.
+
+    Returns True if the reaction was sent, False otherwise.
+    """
+    try:
+        _activate_toolbar(driver)
+
+        # Find and click the Reactions button in the toolbar
+        react_btn = _find_element_multi(driver, _REACTION_BTN_SELECTORS)
+        if not react_btn:
+            react_btn = driver.execute_script("""
+                var btns = document.querySelectorAll('button, [role="button"]');
+                for (var i = 0; i < btns.length; i++) {
+                    var el = btns[i];
+                    if (el.offsetWidth === 0 || el.offsetHeight === 0) continue;
+                    var txt = (el.textContent || '').trim().toLowerCase();
+                    var al  = (el.getAttribute('aria-label') || '').toLowerCase();
+                    if (al.indexOf('react') !== -1 || txt === 'reactions' ||
+                        txt === 'react') return el;
+                }
+                return null;
+            """)
+
+        if not react_btn:
+            log.debug("Bot %d: Reactions button not found.", bot_id + 1)
+            return False
+
+        driver.execute_script("arguments[0].click();", react_btn)
+        time.sleep(0.8)
+
+        # Find the specific reaction emoji in the popup/panel
+        keywords = _REACTION_MAP.get(reaction_type, [reaction_type])
+        emoji_btn = driver.execute_script("""
+            var keywords = arguments[0];
+            // Check all clickable elements in the reaction panel
+            var els = document.querySelectorAll(
+                'button, [role="button"], [role="option"], span[role="img"], ' +
+                '[class*="reaction"] [role="button"], [class*="emoji"]'
+            );
+            for (var i = 0; i < els.length; i++) {
+                var el = els[i];
+                if (el.offsetWidth === 0 || el.offsetHeight === 0) continue;
+                var al = (el.getAttribute('aria-label') || '').toLowerCase();
+                var tt = (el.getAttribute('title') || '').toLowerCase();
+                for (var k = 0; k < keywords.length; k++) {
+                    if (al.indexOf(keywords[k]) !== -1 || tt.indexOf(keywords[k]) !== -1)
+                        return el;
+                }
+            }
+            return null;
+        """, keywords)
+
+        if emoji_btn:
+            driver.execute_script("arguments[0].click();", emoji_btn)
+            log.info("Bot %d: Sent %s reaction.", bot_id + 1, reaction_type)
+            time.sleep(0.3)
+            return True
+        else:
+            # Fallback: click the first visible emoji-like button in any reaction panel
+            fallback = driver.execute_script("""
+                var panels = document.querySelectorAll(
+                    '[class*="reaction"], [class*="emoji-panel"], [class*="Reaction"]'
+                );
+                for (var p = 0; p < panels.length; p++) {
+                    var btns = panels[p].querySelectorAll('button, [role="button"], span[role="img"]');
+                    for (var i = 0; i < btns.length; i++) {
+                        if (btns[i].offsetWidth > 0) return btns[i];
+                    }
+                }
+                return null;
+            """)
+            if fallback:
+                driver.execute_script("arguments[0].click();", fallback)
+                log.info("Bot %d: Sent reaction (fallback).", bot_id + 1)
+                return True
+            log.debug("Bot %d: Could not find %s emoji in reaction panel.", bot_id + 1, reaction_type)
+            return False
+
+    except Exception as exc:
+        log.debug("Bot %d: Reaction failed: %s", bot_id + 1, exc)
+        return False
+
+
+def spam_reactions(driver, bot_id, reactions, count, delay=1.0):
+    """Send multiple reactions in a loop.
+
+    *reactions* is a list of reaction type names (e.g. ["clap", "heart"]).
+    """
+    if not reactions or count <= 0:
+        return
+    log.info("Bot %d: Spamming %d reactions (%s)…", bot_id + 1, count,
+             ", ".join(reactions))
+    for i in range(count):
+        reaction = random.choice(reactions)
+        send_reaction(driver, bot_id, reaction)
+        if i < count - 1:
+            time.sleep(delay)
+    log.info("Bot %d: Finished reaction spam.", bot_id + 1)
+
+
+# ── Bot persistence / health check ────────────────────────────────────────
+
+def check_bot_alive(driver):
+    """Return True if the bot appears to still be in a Zoom meeting."""
+    try:
+        # Check page title and URL — if redirected away from meeting, bot is dead
+        url = driver.current_url or ""
+        if "zoom.us" not in url:
+            return False
+
+        # Check for "meeting has ended" text
+        ended_selectors = [
+            (By.XPATH, "//*[contains(text(), 'meeting has ended')]"),
+            (By.XPATH, "//*[contains(text(), 'Meeting has been ended')]"),
+            (By.XPATH, "//*[contains(text(), 'The host has ended')]"),
+            (By.XPATH, "//*[contains(text(), 'You have been removed')]"),
+        ]
+        if _find_element_multi(driver, ended_selectors):
+            return False
+
+        # If we can find the leave button, we're still in the meeting
+        _activate_toolbar(driver)
+        if _find_element_with_cache(driver, "leave_btn", _LEAVE_BTN_SELECTORS):
+            return True
+
+        # Fallback: check for any meeting UI element
+        return bool(driver.execute_script("""
+            return document.querySelector('[class*="meeting"], [class*="footer"]') !== null;
+        """))
+    except Exception:
         return False
 
 

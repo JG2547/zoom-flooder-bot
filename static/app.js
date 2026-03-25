@@ -26,7 +26,14 @@ document.addEventListener("DOMContentLoaded", () => {
         autoRestart:  document.getElementById("auto-restart"),
         restartDelay: document.getElementById("restart-delay"),
         useProxies:   document.getElementById("use-proxies"),
+        waitingRoomTimeout: document.getElementById("waiting-room-timeout"),
+        reactionCount: document.getElementById("reaction-count"),
+        reactionDelay: document.getElementById("reaction-delay"),
+        persistMode:  document.getElementById("persist-mode"),
     };
+
+    const screenshotGrid = document.getElementById("screenshot-grid");
+    const screenshotPlaceholder = document.getElementById("screenshot-placeholder");
 
     const statEls = {
         joined:  document.getElementById("stat-joined"),
@@ -130,6 +137,12 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStart.addEventListener("click", () => {
         const numBots = parseInt(inputs.numBots.value) || 1;
 
+        // Collect selected reactions
+        const selectedReactions = [];
+        document.querySelectorAll("#reaction-checkboxes input:checked").forEach(cb => {
+            selectedReactions.push(cb.value);
+        });
+
         const payload = {
             meeting_id:   inputs.meetingId.value,
             passcode:     inputs.passcode.value,
@@ -139,6 +152,11 @@ document.addEventListener("DOMContentLoaded", () => {
             use_proxies:  inputs.useProxies.checked,
             chat_recipient: inputs.chatRecipient.value,
             chat_message: inputs.chatMessage.value,
+            waiting_room_timeout: parseInt(inputs.waitingRoomTimeout.value) || 60,
+            reactions:    selectedReactions,
+            reaction_count: parseInt(inputs.reactionCount.value) || 0,
+            reaction_delay: parseFloat(inputs.reactionDelay.value) || 1.0,
+            persist_mode: inputs.persistMode.checked,
         };
 
         if (!payload.meeting_id || !payload.passcode) {
@@ -301,5 +319,36 @@ document.addEventListener("DOMContentLoaded", () => {
         a.click();
         URL.revokeObjectURL(url);
         showToast("Log file downloaded.", "success");
+    });
+
+    // ── Screenshot viewer ──────────────────────────────────────────
+    function loadScreenshots() {
+        fetch("/api/screenshots")
+            .then(r => r.json())
+            .then(data => {
+                screenshotGrid.innerHTML = "";
+                if (!data.length) {
+                    screenshotPlaceholder.style.display = "";
+                    return;
+                }
+                screenshotPlaceholder.style.display = "none";
+                data.slice(-30).forEach(s => {
+                    const thumb = document.createElement("div");
+                    thumb.className = "screenshot-thumb";
+                    thumb.innerHTML = '<img src="/screenshots/' + s.filename + '" alt="' + s.label + '" loading="lazy"><span>' + s.label + '</span>';
+                    thumb.addEventListener("click", () => {
+                        window.open("/screenshots/" + s.filename, "_blank");
+                    });
+                    screenshotGrid.appendChild(thumb);
+                });
+            })
+            .catch(() => {});
+    }
+
+    document.getElementById("btn-refresh-screenshots").addEventListener("click", loadScreenshots);
+
+    // Auto-refresh screenshots when a new one arrives
+    socket.on("screenshot_update", () => {
+        loadScreenshots();
     });
 });

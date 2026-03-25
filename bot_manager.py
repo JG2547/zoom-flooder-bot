@@ -14,7 +14,8 @@ import random
 import threading
 import time
 
-from bot import launch_bot, init_name_pool, leave_meeting
+from bot import (launch_bot, init_name_pool, leave_meeting,
+                 check_bot_alive, send_chat_message, spam_reactions)
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +27,10 @@ class BotStatus(enum.Enum):
     LEAVING = "leaving"
     LEFT = "left"
     FAILED = "failed"
+    CAPTCHA = "captcha"
+    WAITING_ROOM = "waiting_room"
+    DISCONNECTED = "disconnected"
+    RECONNECTING = "reconnecting"
 
 
 class BotManager:
@@ -118,6 +123,10 @@ class BotManager:
                 self._cycle += 1
                 self._run_single_cycle(cfg)
 
+                # Persistence mode: keep bots alive and monitor them
+                if cfg.get("persist_mode") and self._active_drivers and not self._stop_event.is_set():
+                    self._persistence_loop(cfg)
+
                 # Check if we should auto-restart
                 if self._stop_event.is_set() or not self._auto_restart:
                     break
@@ -147,6 +156,101 @@ class BotManager:
             self._running = False
             self._lock.release()
             self._notify_stats()
+
+    # ── Persistence loop ──────────────────────────────────────────────────────
+    def _persistence_loop(self, cfg):
+        """Keep bots alive, send periodic messages/reactions, and rejoin if kicked."""
+        interval = cfg.get("persist_interval", 30)
+        chat_interval = cfg.get("persist_chat_interval", 0)
+        reaction_interval = cfg.get("persist_reaction_interval", 0)
+        chat_msg = cfg.get("chat_message", "")
+        reactions = cfg.get("reactions", [])
+        reaction_count = cfg.get("reaction_count", 0)
+
+        log.info("── Persistence mode active (interval: %ds) ──", interval)
+        last_chat = time.monotonic()
+        last_reaction = time.monotonic()
+
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=interval)
+            if self._stop_event.is_set():
+                break
+
+            now = time.monotonic()
+            dead_bots = []
+
+            for bot_id_1, driver in list(self._active_drivers):
+                bot_id = bot_id_1 - 1
+                try:
+                    alive = check_bot_alive(driver)
+                except Exception:
+                    alive = False
+
+                if not alive:
+                    log.warning("Bot %d: Disconnected from meeting.", bot_id_1)
+                    self._set_status(bot_id, BotStatus.DISCONNECTED)
+                    dead_bots.append((bot_id_1, driver))
+                    continue
+
+                # Periodic chat
+                if chat_interval > 0 and chat_msg and (now - last_chat) >= chat_interval:
+                    try:
+                        send_chat_message(driver, bot_id, chat_msg)
+                    except Exception:
+                        pass
+
+                # Periodic reactions
+                if (reaction_interval > 0 and reactions and reaction_count > 0 and
+                        (now - last_reaction) >= reaction_interval):
+                    try:
+                        spam_reactions(driver, bot_id, reactions, 1, 0.5)
+                    except Exception:
+                        pass
+
+            if chat_interval > 0 and (now - last_chat) >= chat_interval:
+                last_chat = now
+            if reaction_interval > 0 and (now - last_reaction) >= reaction_interval:
+                last_reaction = now
+
+            # Clean up dead bots
+            for bot_id_1, driver in dead_bots:
+                self._active_drivers.remove((bot_id_1, driver))
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+                # Attempt rejoin
+                bot_id = bot_id_1 - 1
+                self._set_status(bot_id, BotStatus.RECONNECTING)
+                log.info("Bot %d: Attempting rejoin…", bot_id_1)
+                try:
+                    new_driver, elapsed = launch_bot(
+                        bot_id=bot_id,
+                        meeting_id=cfg["meeting_id"],
+                        passcode=cfg["passcode"],
+                        names_list=cfg["names_list"],
+                        custom_name=cfg["custom_name"],
+                        stop_event=self._stop_event,
+                        proxies=cfg.get("proxies"),
+                        status_callback=self._bot_status_callback,
+                        persist_mode=True,
+                    )
+                    if new_driver and new_driver not in ("left", "captcha"):
+                        self._active_drivers.append((bot_id_1, new_driver))
+                        self._set_status(bot_id, BotStatus.JOINED)
+                        log.info("Bot %d: Rejoined successfully.", bot_id_1)
+                    else:
+                        self._set_status(bot_id, BotStatus.FAILED)
+                        log.warning("Bot %d: Rejoin failed.", bot_id_1)
+                except Exception as exc:
+                    self._set_status(bot_id, BotStatus.FAILED)
+                    log.warning("Bot %d: Rejoin error: %s", bot_id_1, exc)
+
+            # If all bots are dead and rejoin failed, exit persistence
+            if not self._active_drivers:
+                log.info("── All bots disconnected, exiting persistence mode ──")
+                break
 
     def _run_single_cycle(self, cfg):
         """Execute one full launch-all-bots cycle."""
@@ -185,6 +289,12 @@ class BotManager:
                         proxies=cfg.get("proxies"),
                         chat_recipient=cfg.get("chat_recipient", ""),
                         chat_message=cfg.get("chat_message", ""),
+                        status_callback=self._bot_status_callback,
+                        waiting_room_timeout=cfg.get("waiting_room_timeout", 60),
+                        reactions=cfg.get("reactions"),
+                        reaction_count=cfg.get("reaction_count", 0),
+                        reaction_delay=cfg.get("reaction_delay", 1.0),
+                        persist_mode=cfg.get("persist_mode", False),
                     )] = i
 
                 for future in concurrent.futures.as_completed(futures):
@@ -201,6 +311,10 @@ class BotManager:
                             # Bot joined, sent message, and already left gracefully
                             self._succeeded += 1
                             self._bot_statuses[bot_id] = BotStatus.LEFT
+                        elif driver == "captcha":
+                            # Bot hit a captcha/challenge — don't retry
+                            self._failed += 1
+                            self._bot_statuses[bot_id] = BotStatus.CAPTCHA
                         elif driver:
                             self._active_drivers.append((bot_id + 1, driver))
                             self._succeeded += 1
@@ -254,6 +368,17 @@ class BotManager:
         log.info("All %d bots left and exited.", len(drivers))
 
     # ── Internals ────────────────────────────────────────────────────────────
+    def _bot_status_callback(self, bot_id, status_str):
+        """Called from launch_bot threads for mid-flight status updates."""
+        status_map = {
+            "waiting_room": BotStatus.WAITING_ROOM,
+            "disconnected": BotStatus.DISCONNECTED,
+            "reconnecting": BotStatus.RECONNECTING,
+        }
+        status = status_map.get(status_str)
+        if status:
+            self._set_status(bot_id, status)
+
     def _set_status(self, bot_id, status):
         with self._stats_lock:
             self._bot_statuses[bot_id] = status
