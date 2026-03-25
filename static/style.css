@@ -130,13 +130,33 @@ header h1 {
     margin-bottom: 1rem;
 }
 
-/* ── Config Form ───────────────────────────────────────────────────── */
+/* ── Form Sections (fieldsets) ─────────────────────────────────────── */
+.form-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1rem 1rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.form-section legend {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent-blue);
+    padding: 0 0.4rem;
+}
+
+/* ── Form Grid ─────────────────────────────────────────────────────── */
 .form-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
     gap: 0.75rem;
 }
+.form-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.form-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
 .form-group { display: flex; flex-direction: column; gap: 0.3rem; }
+.form-group.span-2 { grid-column: span 2; }
 .form-group.full-width { grid-column: 1 / -1; }
 .form-group label {
     font-size: 0.78rem;
@@ -146,7 +166,8 @@ header h1 {
 .form-group label .hint { color: var(--text-muted); font-weight: 400; }
 
 input[type="text"],
-input[type="number"] {
+input[type="number"],
+input[type="datetime-local"] {
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -165,18 +186,40 @@ input:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
-
-/* ── Auto-restart toggle ──────────────────────────────────────────── */
-.auto-restart-row {
-    display: flex;
-    align-items: flex-end;
+.input-mini {
+    width: 60px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
 }
+
+/* ── Toggle Grid (options row) ─────────────────────────────────────── */
+.toggle-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    align-items: flex-start;
+}
+.toggle-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.toggle-sub {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-left: 2.75rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+.toggle-sub label { font-size: 0.72rem; color: var(--text-muted); }
+
 .toggle-label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     cursor: pointer;
-    padding: 0.55rem 0;
+    padding: 0.3rem 0;
     font-size: 0.88rem;
 }
 .toggle-label input[type="checkbox"] {
@@ -215,6 +258,23 @@ input:disabled {
     font-weight: 500;
     color: var(--text-secondary);
 }
+
+/* ── Checkbox Row (reactions) ──────────────────────────────────────── */
+.checkbox-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    padding: 0.3rem 0;
+}
+.checkbox-row label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] { accent-color: var(--accent-blue); }
 
 /* ── Buttons ───────────────────────────────────────────────────────── */
 #controls {
@@ -325,6 +385,14 @@ input:disabled {
 .bot-card.reconnecting { border-color: var(--accent-yellow); color: var(--accent-yellow); background: var(--accent-yellow-dim); animation: pulse-waiting 1.5s ease-in-out infinite; }
 @keyframes pulse-waiting { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
+/* ── Two-Column Layout ─────────────────────────────────────────────── */
+.two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+}
+.two-col .panel { margin-bottom: 0; }
+
 /* ── Log Feed ──────────────────────────────────────────────────────── */
 .log-header {
     display: flex;
@@ -358,27 +426,13 @@ input:disabled {
 .log-line.WARNING { color: var(--accent-yellow); }
 .log-line.INFO    { color: var(--text-secondary); }
 
-/* ── Checkbox Row (reactions) ──────────────────────────────────────── */
-.checkbox-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem 1rem;
-}
-.checkbox-row label {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    cursor: pointer;
-}
-.checkbox-row input[type="checkbox"] { accent-color: var(--accent-blue); }
-
 /* ── Screenshot Viewer ────────────────────────────────────────────── */
 #screenshot-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 0.6rem;
+    max-height: 320px;
+    overflow-y: auto;
 }
 .screenshot-thumb {
     cursor: pointer;
@@ -450,10 +504,15 @@ input:disabled {
 /* ── Responsive ────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
     .stat-grid { grid-template-columns: repeat(3, 1fr); }
-    .form-grid { grid-template-columns: repeat(2, 1fr); }
+    .form-grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+    .form-group.span-2 { grid-column: span 1; }
+    .two-col { grid-template-columns: 1fr; }
 }
 @media (max-width: 500px) {
     .stat-grid { grid-template-columns: repeat(2, 1fr); }
-    .form-grid { grid-template-columns: 1fr; }
+    .form-grid.cols-4,
+    .form-grid.cols-3,
+    .form-grid.cols-2 { grid-template-columns: 1fr; }
+    .form-group.span-2 { grid-column: span 1; }
     body { padding: 0.75rem; }
 }

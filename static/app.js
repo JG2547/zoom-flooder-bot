@@ -30,6 +30,8 @@ document.addEventListener("DOMContentLoaded", () => {
         reactionCount: document.getElementById("reaction-count"),
         reactionDelay: document.getElementById("reaction-delay"),
         persistMode:  document.getElementById("persist-mode"),
+        chatRepeatCount: document.getElementById("chat-repeat-count"),
+        chatRepeatDelay: document.getElementById("chat-repeat-delay"),
     };
 
     const screenshotGrid = document.getElementById("screenshot-grid");
@@ -157,6 +159,8 @@ document.addEventListener("DOMContentLoaded", () => {
             reaction_count: parseInt(inputs.reactionCount.value) || 0,
             reaction_delay: parseFloat(inputs.reactionDelay.value) || 1.0,
             persist_mode: inputs.persistMode.checked,
+            chat_repeat_count: parseInt(inputs.chatRepeatCount.value) || 0,
+            chat_repeat_delay: parseFloat(inputs.chatRepeatDelay.value) || 2.0,
         };
 
         if (!payload.meeting_id || !payload.passcode) {

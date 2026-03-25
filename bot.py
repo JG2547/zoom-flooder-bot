@@ -622,7 +622,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                stop_event=None, proxies=None, chat_recipient="", chat_message="",
                status_callback=None, waiting_room_timeout=60,
                reactions=None, reaction_count=0, reaction_delay=1.0,
-               persist_mode=False):
+               persist_mode=False, chat_repeat_count=0, chat_repeat_delay=2.0):
     """Launch a single bot that joins the given Zoom meeting.
 
     Returns (driver, elapsed_seconds) on success or (None, elapsed_seconds) on failure.
@@ -826,7 +826,13 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
             # ── Send chat message if configured ─────────────────────
             if chat_message and driver:
                 time.sleep(2)  # Let the meeting UI fully render
-                send_chat_message(driver, bot_id, chat_message, chat_recipient)
+                total_sends = 1 + max(0, chat_repeat_count)
+                for msg_i in range(total_sends):
+                    if msg_i > 0:
+                        time.sleep(chat_repeat_delay)
+                    send_chat_message(driver, bot_id, chat_message, chat_recipient)
+                if total_sends > 1:
+                    log.info("Bot %d: Sent chat message %d times.", bot_id + 1, total_sends)
 
             # ── Send reactions if configured ──────────────────────────
             if reactions and reaction_count > 0 and driver:

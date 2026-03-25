@@ -143,7 +143,8 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
                   use_proxies=False, chat_recipient="", chat_message="",
                   waiting_room_timeout=60, reactions=None, reaction_count=0,
                   reaction_delay=1.0, persist_mode=False, persist_interval=30,
-                  persist_chat_interval=0, persist_reaction_interval=0):
+                  persist_chat_interval=0, persist_reaction_interval=0,
+                  chat_repeat_count=0, chat_repeat_delay=2.0):
     """Build a config dict from explicit values — no input() calls."""
     names = load_names()
 
@@ -183,6 +184,8 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
         "persist_interval": max(5, int(persist_interval)),
         "persist_chat_interval": max(0, int(persist_chat_interval)),
         "persist_reaction_interval": max(0, int(persist_reaction_interval)),
+        "chat_repeat_count": max(0, int(chat_repeat_count)),
+        "chat_repeat_delay": max(0.5, float(chat_repeat_delay)),
     }
 
 

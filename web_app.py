@@ -159,6 +159,8 @@ def handle_start(data):
             persist_interval=data.get("persist_interval", 30),
             persist_chat_interval=data.get("persist_chat_interval", 0),
             persist_reaction_interval=data.get("persist_reaction_interval", 0),
+            chat_repeat_count=data.get("chat_repeat_count", 0),
+            chat_repeat_delay=data.get("chat_repeat_delay", 2.0),
         )
         manager.start(cfg)
         emit("status", {"ok": True, "message": "Launch started."})

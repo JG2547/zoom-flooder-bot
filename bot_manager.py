@@ -295,6 +295,8 @@ class BotManager:
                         reaction_count=cfg.get("reaction_count", 0),
                         reaction_delay=cfg.get("reaction_delay", 1.0),
                         persist_mode=cfg.get("persist_mode", False),
+                        chat_repeat_count=cfg.get("chat_repeat_count", 0),
+                        chat_repeat_delay=cfg.get("chat_repeat_delay", 2.0),
                     )] = i
 
                 for future in concurrent.futures.as_completed(futures):
