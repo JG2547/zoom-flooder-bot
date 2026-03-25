@@ -21,7 +21,7 @@
 </header>
 
 <!-- ── Progress bar ──────────────────────────────────────────────── -->
-<div id="progress-wrap" class="hidden">
+<div id="progress-wrap" class="hidden" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
     <div id="progress-bar"></div>
     <span id="progress-text">0%</span>
 </div>
@@ -216,7 +216,7 @@
                     <button id="btn-download-logs" class="btn-small" title="Download logs">Download</button>
                 </div>
             </div>
-            <div id="log-container"></div>
+            <div id="log-container" role="log" aria-live="polite"></div>
         </section>
     </div>
 

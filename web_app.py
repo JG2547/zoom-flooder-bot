@@ -172,16 +172,22 @@ def handle_start(data):
 
 @socketio.on("stop")
 def handle_stop():
-    manager.stop()
-    emit("status", {"ok": True, "message": "Stop signal sent."})
+    try:
+        manager.stop()
+        emit("status", {"ok": True, "message": "Stop signal sent."})
+    except Exception as exc:
+        emit("status", {"ok": False, "message": f"Stop error: {exc}"})
 
 
 @socketio.on("set_auto_restart")
 def handle_auto_restart(data):
-    enabled = bool(data.get("enabled", False))
-    delay = int(data.get("delay", 5))
-    manager.set_auto_restart(enabled, delay)
-    emit("status", {"ok": True, "message": f"Auto-restart {'enabled' if enabled else 'disabled'}."})
+    try:
+        enabled = bool(data.get("enabled", False))
+        delay = int(data.get("delay", 5))
+        manager.set_auto_restart(enabled, delay)
+        emit("status", {"ok": True, "message": f"Auto-restart {'enabled' if enabled else 'disabled'}."})
+    except Exception as exc:
+        emit("status", {"ok": False, "message": f"Error: {exc}"})
 
 
 @socketio.on("check_proxies")
@@ -235,6 +241,9 @@ def handle_schedule_raid(data):
             reactions=data.get("reactions", []),
             reaction_count=data.get("reaction_count", 0),
             reaction_delay=data.get("reaction_delay", 1.0),
+            chat_repeat_count=data.get("chat_repeat_count", 0),
+            chat_repeat_delay=data.get("chat_repeat_delay", 2.0),
+            waiting_room_timeout=data.get("waiting_room_timeout", 60),
         )
 
         def _fire():

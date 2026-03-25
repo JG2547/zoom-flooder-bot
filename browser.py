@@ -117,13 +117,17 @@ def _build_chrome_options(proxy=None):
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-webgl")
-    options.add_argument("--enable-unsafe-swiftshader")
+    options.add_argument("--use-gl=swiftshader")  # replaces deprecated --enable-unsafe-swiftshader
     options.add_argument("--window-size=800,600")  # small but usable viewport
     options.add_argument("--blink-settings=imagesEnabled=false")  # skip image decoding
 
+    # Memory optimization
+    options.add_argument("--js-flags=--max-old-space-size=128")
+    options.add_argument("--disable-features=TranslateUI,PreloadingHeuristics,WebRtcHideLocalIpsWithMdns")
+
     # Audio / media
     options.add_argument("--mute-audio")
-    options.add_argument("--disable-features=WebRtcHideLocalIpsWithMdns")
+    options.add_argument("--autoplay-policy=no-user-gesture-required")
 
     # Proxy
     if proxy:

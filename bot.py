@@ -271,6 +271,35 @@ def _activate_toolbar(driver):
             pass
 
 
+def _find_in_any_frame(driver, selectors, activate=False):
+    """Search for an element across the main document and all iframes.
+
+    Returns the element if found (driver context is set to the containing frame),
+    or None (driver context is reset to default_content).
+    """
+    if activate:
+        _activate_toolbar(driver)
+    el = _find_element_multi(driver, selectors)
+    if el:
+        return el
+    iframes = driver.find_elements(By.TAG_NAME, "iframe")
+    for iframe in iframes:
+        try:
+            driver.switch_to.frame(iframe)
+            if activate:
+                _activate_toolbar(driver)
+            el = _find_element_multi(driver, selectors)
+            if el:
+                return el
+            driver.switch_to.default_content()
+        except Exception:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+    return None
+
+
 # ── DOM Selector Auto-Discovery ────────────────────────────────────────────
 _selector_cache = {}
 _selector_cache_lock = threading.Lock()
@@ -1214,23 +1243,8 @@ def send_chat_message(driver, bot_id, message, recipient=""):
     try:
         driver.switch_to.default_content()
 
-        # Activate the toolbar so chat button is visible
-        _activate_toolbar(driver)
-
-        # Switch into Zoom iframe if needed
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            try:
-                driver.switch_to.frame(iframe)
-                _activate_toolbar(driver)
-                if _find_element_multi(driver, _CHAT_BTN_SELECTORS):
-                    break
-                driver.switch_to.default_content()
-            except Exception:
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
+        # Find chat button across all frames (activates toolbar automatically)
+        _find_in_any_frame(driver, _CHAT_BTN_SELECTORS, activate=True)
 
         # Step 1: Open chat panel — try cached, then hardcoded selectors
         chat_btn = _find_element_with_cache(driver, "chat_btn", _CHAT_BTN_SELECTORS)
@@ -1449,23 +1463,8 @@ def leave_meeting(driver, bot_id):
     try:
         driver.switch_to.default_content()
 
-        # Activate toolbar so the Leave button is visible
-        _activate_toolbar(driver)
-
-        # Switch into the Zoom iframe if needed
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            try:
-                driver.switch_to.frame(iframe)
-                _activate_toolbar(driver)
-                if _find_element_multi(driver, _LEAVE_BTN_SELECTORS):
-                    break
-                driver.switch_to.default_content()
-            except Exception:
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
+        # Find leave button across all frames (activates toolbar automatically)
+        _find_in_any_frame(driver, _LEAVE_BTN_SELECTORS, activate=True)
 
         # Step 1: Click the "Leave" button in the meeting toolbar
         leave_btn = _find_element_with_cache(driver, "leave_btn", _LEAVE_BTN_SELECTORS)

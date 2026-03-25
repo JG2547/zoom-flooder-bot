@@ -64,6 +64,9 @@ class BotManager:
     def get_stats(self):
         with self._stats_lock:
             jt = list(self._join_times)
+            running = self._running
+            auto_restart = self._auto_restart
+            cycle = self._cycle
             return {
                 "total": self._total,
                 "succeeded": self._succeeded,
@@ -73,9 +76,9 @@ class BotManager:
                 "fastest": min(jt) if jt else 0,
                 "slowest": max(jt) if jt else 0,
                 "bot_statuses": dict(self._bot_statuses),
-                "running": self._running,
-                "auto_restart": self._auto_restart,
-                "cycle": self._cycle,
+                "running": running,
+                "auto_restart": auto_restart,
+                "cycle": cycle,
             }
 
     @property
@@ -99,12 +102,12 @@ class BotManager:
             raise RuntimeError("A launch session is already active.")
 
         self._stop_event.clear()
-        self._running = True
         self._active_drivers.clear()
-        self._cycle = 0
 
         # Reset stats
         with self._stats_lock:
+            self._running = True
+            self._cycle = 0
             self._bot_statuses = {i: BotStatus.PENDING for i in range(cfg["num_bots"])}
             self._join_times = []
             self._succeeded = 0
@@ -120,7 +123,8 @@ class BotManager:
     def _run(self, cfg):
         try:
             while True:
-                self._cycle += 1
+                with self._stats_lock:
+                    self._cycle += 1
                 self._run_single_cycle(cfg)
 
                 # Persistence mode: keep bots alive and monitor them
@@ -153,7 +157,8 @@ class BotManager:
         finally:
             if self._stop_event.is_set():
                 self._shutdown_drivers()
-            self._running = False
+            with self._stats_lock:
+                self._running = False
             self._lock.release()
             self._notify_stats()
 

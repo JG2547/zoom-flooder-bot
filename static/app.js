@@ -91,7 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function setFormLocked(locked) {
         Object.entries(inputs).forEach(([key, el]) => {
             // Keep auto-restart controls always interactive
-            if (key === "autoRestart" || key === "restartDelay" || key === "useProxies") return;
+            if (key === "autoRestart" || key === "restartDelay") return;
             el.disabled = locked;
         });
     }
@@ -331,22 +331,29 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => r.json())
             .then(data => {
                 screenshotGrid.innerHTML = "";
-                if (!data.length) {
-                    screenshotPlaceholder.style.display = "";
+                if (!Array.isArray(data) || !data.length) {
+                    screenshotPlaceholder.style.display = "block";
                     return;
                 }
                 screenshotPlaceholder.style.display = "none";
                 data.slice(-30).forEach(s => {
                     const thumb = document.createElement("div");
                     thumb.className = "screenshot-thumb";
-                    thumb.innerHTML = '<img src="/screenshots/' + s.filename + '" alt="' + s.label + '" loading="lazy"><span>' + s.label + '</span>';
+                    const img = document.createElement("img");
+                    img.src = "/screenshots/" + encodeURIComponent(s.filename);
+                    img.alt = s.label;
+                    img.loading = "lazy";
+                    const span = document.createElement("span");
+                    span.textContent = s.label;
+                    thumb.appendChild(img);
+                    thumb.appendChild(span);
                     thumb.addEventListener("click", () => {
-                        window.open("/screenshots/" + s.filename, "_blank");
+                        window.open("/screenshots/" + encodeURIComponent(s.filename), "_blank");
                     });
                     screenshotGrid.appendChild(thumb);
                 });
             })
-            .catch(() => {});
+            .catch(() => { showToast("Failed to load screenshots.", "error"); });
     }
 
     document.getElementById("btn-refresh-screenshots").addEventListener("click", loadScreenshots);
