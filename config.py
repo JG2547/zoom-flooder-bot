@@ -272,6 +272,11 @@ def load_integration_config():
         "discord_guild_id": guild_id,
         "allowed_discord_channels": _csv_ints("ALLOWED_DISCORD_CHANNELS"),
         "allowed_telegram_users": _csv_ints("ALLOWED_TELEGRAM_USERS"),
+        # ZMT Control Plane
+        "zmt_enabled": os.environ.get("ZMT_ENABLED", "").lower() in ("1", "true", "yes"),
+        "zmt_cp_url": os.environ.get("ZMT_CP_URL", "").strip() or None,
+        "zmt_registration_key": os.environ.get("ZMT_REGISTRATION_KEY", "").strip() or None,
+        "zmt_agent_name": os.environ.get("ZMT_AGENT_NAME", "").strip() or None,
     }
 
 

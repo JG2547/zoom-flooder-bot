@@ -5,3 +5,5 @@ flask-socketio
 python-dotenv
 discord.py>=2.0
 python-telegram-bot>=20.0
+requests>=2.28.0
+websocket-client>=1.6.0
