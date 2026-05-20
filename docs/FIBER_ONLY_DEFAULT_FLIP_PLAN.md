@@ -5,6 +5,11 @@
 > behaviour after the flip is monitored per
 > [`docs/FIBER_ONLY_POST_FLIP_MONITORING.md`](FIBER_ONLY_POST_FLIP_MONITORING.md).
 > Hybrid remains available via `DETECTION_MODE=hybrid` env override.
+> The future cleanup that deletes the legacy DOM paths is planned
+> separately at
+> [`docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md`](FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md)
+> and is gated on its own approval phrase
+> (`APPROVE_STANDALONE_BOT_FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_IMPLEMENTATION`).
 > The remainder of this document is preserved verbatim as the plan
 > that authorized the flip.
 

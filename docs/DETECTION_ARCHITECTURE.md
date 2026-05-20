@@ -276,8 +276,11 @@ default is now `"fiber_only"`; `"hybrid"` remains a permitted choice
 via env override. The first stable cycle after the flip is monitored
 per [`docs/FIBER_ONLY_POST_FLIP_MONITORING.md`](FIBER_ONLY_POST_FLIP_MONITORING.md),
 which documents the signals to watch, the three-tier rollback
-procedure, and the exit criteria that gate the future Phase 5
-legacy-DOM cleanup.
+procedure, and the exit criteria that gate the future Phase 10
+legacy-DOM cleanup. The Phase 10 cleanup plan itself is now
+authored at
+[`docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md`](FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md) —
+plan only; deletion requires its own approval phrase.
 
 ---
 

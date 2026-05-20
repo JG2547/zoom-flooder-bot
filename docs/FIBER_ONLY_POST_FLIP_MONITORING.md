@@ -344,7 +344,14 @@ becomes plannable — when **all** of the following hold:
 - [ ] Sanitized monitoring notes collected for the cycle.
 
 Only after all eight checkboxes hold should the operator consider
-proposing Phase 5 (`APPROVE_STANDALONE_BOT_FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN`).
+proposing Phase 10 (`APPROVE_STANDALONE_BOT_FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN`).
+The Phase 10 plan itself is now committed at
+[`docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md`](FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md).
+That document is a written plan — it does NOT delete code. The
+actual removal requires a separate operator approval
+(`APPROVE_STANDALONE_BOT_FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_IMPLEMENTATION`,
+or the waiver variant) and is gated on the prerequisites in §3 of
+that plan.
 Until then, the hybrid paths stay in source.
 
 ---
