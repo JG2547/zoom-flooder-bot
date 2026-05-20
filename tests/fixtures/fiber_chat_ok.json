@@ -1,0 +1,34 @@
+{
+    "outcome": "OK",
+    "elapsedMs": 9,
+    "data": [
+        {
+            "sender": "Alice Host",
+            "text": "Welcome everyone",
+            "timestamp": 1700000000000,
+            "messageId": "m-1",
+            "rawKeys": ["sender", "text", "timestamp"]
+        },
+        {
+            "sender": "Bob Self",
+            "text": "Hello!",
+            "timestamp": 1700000001000,
+            "messageId": "m-2",
+            "rawKeys": ["sender", "text", "timestamp"]
+        },
+        {
+            "sender": "Carol",
+            "text": "",
+            "timestamp": 1700000002000,
+            "messageId": "m-3",
+            "rawKeys": ["sender", "text"]
+        },
+        {
+            "sender": "Carol",
+            "text": "Question about the agenda?",
+            "timestamp": 1700000003000,
+            "messageId": "m-4",
+            "rawKeys": ["sender", "text", "timestamp"]
+        }
+    ]
+}

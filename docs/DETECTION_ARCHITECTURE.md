@@ -146,6 +146,67 @@ Phases 2-5 each require a separate approval phrase
 
 ---
 
+## 6a. Safe dry-run validation
+
+Phase 3 wired the readers behind `DETECTION_MODE`. Phase 4 ships a
+fixture-driven dry-run harness that proves the fiber-only path can be
+exercised end-to-end **without joining a Zoom meeting, sending chat,
+starting `BotManager`, or binding the dashboard port**.
+
+### Run it
+
+```bash
+cd zoom-flooder-bot-main
+python -m unittest discover -s tests -p "test_*fiber*.py" -v
+```
+
+The suite contains three layers:
+
+1. **`tests/test_bot_fiber.py`** — unit tests for `bot_fiber.py` types,
+   JS payload string sanity, outcome mapping. No `bot.py` import path.
+2. **`tests/test_bot_fiber_wiring.py`** — verifies `bot.py`'s four
+   detection callers route through `bot_fiber.capture_*()` when
+   `DETECTION_MODE="fiber_only"` and do NOT call any legacy DOM
+   selector. Uses a `_SentinelDriver` whose `execute_script` raises
+   `AssertionError` so a DOM leak fails loudly.
+3. **`tests/test_fiber_only_dry_run.py`** — fixture-driven smoke tests:
+   - JSON fixtures under `tests/fixtures/` simulate canned `OK` /
+     `EMPTY` / `UNSUPPORTED` / `DEADLINE_EXCEEDED` payloads.
+   - A `FakeFiberDriver` returns the canned payload based on a marker
+     substring of the JS payload (`participants-ul`, `chat-virtualized-list`,
+     `meetingNumber`) and raises `LegacyDomLeak` for `find_element*`.
+   - Tests confirm `read_chat_messages`, `get_participant_count`,
+     `get_participants`, and `check_bot_alive` map the fixtures to the
+     legacy return shape.
+   - Import smoke: `bot`, `bot_fiber`, `config`, `bot_manager`, `web_app`
+     all import cleanly with `DETECTION_MODE="fiber_only"` set.
+     `web_app` does NOT bind a port at import — `socketio.run()` is
+     gated behind `if __name__ == "__main__":`.
+   - Phase-4 invariants: the hybrid path is NOT deleted, and the
+     `config.py` default for `DETECTION_MODE` remains `"hybrid"`.
+
+### What the dry-run does NOT do
+
+| Action                                       | Status |
+| -------------------------------------------- | ------ |
+| Join a Zoom meeting                          | NO     |
+| Send chat                                    | NO     |
+| Start `BotManager` thread pool                | NO     |
+| Bind `0.0.0.0:5000` or `127.0.0.1:5000`       | NO     |
+| Launch Telegram / Discord clients             | NO     |
+| Contact Railway                              | NO     |
+| Open a real Chrome via Selenium              | NO     |
+| Read or print env values                     | NO     |
+
+### When to flip `DETECTION_MODE=fiber_only` for real
+
+Until Phase 5 lands, `fiber_only` should only be set against a meeting
+you own and can stop instantly. The Phase 4 harness validates the
+mapping logic; only a controlled live meeting can validate that fiber
+state is actually present in the Zoom Web SDK build you are targeting.
+
+---
+
 ## 7. Acceptance criteria for fiber-only readiness
 
 A reader is "fiber-only ready" when:

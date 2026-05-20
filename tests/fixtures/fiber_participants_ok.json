@@ -1,0 +1,66 @@
+{
+    "outcome": "OK",
+    "elapsedMs": 17,
+    "data": [
+        {
+            "displayName": "Alice Host",
+            "userId": "1001",
+            "persistentId": "p-1001",
+            "role": "host",
+            "isHost": true,
+            "isCoHost": false,
+            "isMe": false,
+            "inWaitingRoom": false,
+            "isMuted": false,
+            "isVideoOn": true,
+            "isSharing": true,
+            "isHandRaised": false,
+            "rawKeys": ["userName", "role", "bMuted", "bVideoOn"]
+        },
+        {
+            "displayName": "Bob Self",
+            "userId": "1002",
+            "persistentId": "p-1002",
+            "role": "participant",
+            "isHost": false,
+            "isCoHost": false,
+            "isMe": true,
+            "inWaitingRoom": false,
+            "isMuted": true,
+            "isVideoOn": null,
+            "isSharing": false,
+            "isHandRaised": true,
+            "rawKeys": ["userName", "isMe", "bMuted"]
+        },
+        {
+            "displayName": "Carol",
+            "userId": "1003",
+            "persistentId": "p-1003",
+            "role": "cohost",
+            "isHost": false,
+            "isCoHost": true,
+            "isMe": false,
+            "inWaitingRoom": false,
+            "isMuted": false,
+            "isVideoOn": false,
+            "isSharing": false,
+            "isHandRaised": false,
+            "rawKeys": ["userName", "bCoHost", "bVideoOff"]
+        },
+        {
+            "displayName": "Dave WaitingRoom",
+            "userId": "1004",
+            "persistentId": "p-1004",
+            "role": "participant",
+            "isHost": false,
+            "isCoHost": false,
+            "isMe": false,
+            "inWaitingRoom": true,
+            "isMuted": false,
+            "isVideoOn": null,
+            "isSharing": false,
+            "isHandRaised": false,
+            "rawKeys": ["userName", "isInWaitingRoom"]
+        }
+    ]
+}
