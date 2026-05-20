@@ -277,10 +277,15 @@ via env override. The first stable cycle after the flip is monitored
 per [`docs/FIBER_ONLY_POST_FLIP_MONITORING.md`](FIBER_ONLY_POST_FLIP_MONITORING.md),
 which documents the signals to watch, the three-tier rollback
 procedure, and the exit criteria that gate the future Phase 10
-legacy-DOM cleanup. The Phase 10 cleanup plan itself is now
-authored at
-[`docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md`](FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md) —
-plan only; deletion requires its own approval phrase.
+legacy-DOM cleanup. The Phase 10 cleanup plan was committed at
+[`docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md`](FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md)
+and implemented in commit `710eeb4` under the no-live-test waiver.
+
+The remaining waiting-room helper conversion (out of Phase 10
+scope per §4.6 of that plan) is planned separately at
+[`docs/FIBER_ONLY_WAITING_ROOM_CONVERSION_PLAN.md`](FIBER_ONLY_WAITING_ROOM_CONVERSION_PLAN.md) —
+plan only; implementation requires
+`APPROVE_STANDALONE_BOT_WAITING_ROOM_FIBER_CONVERSION_IMPLEMENTATION`.
 
 ---
 
