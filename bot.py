@@ -32,8 +32,28 @@ def _is_fiber_only_mode():
 
     Read through ``_bot_config`` (not a snapshot at import time) so tests
     can monkeypatch the constant without re-importing this module.
+
+    Phase 10 note: this predicate is informational only. The four
+    detection callers above (``read_chat_messages``,
+    ``get_participant_count``, ``get_participants``,
+    ``check_bot_alive``) no longer branch on it — they always run the
+    fiber path. ``DETECTION_MODE=hybrid`` is accepted by ``config.py``
+    as a compatibility shim but does NOT re-enable the legacy DOM
+    fallbacks; source rollback (``git revert``) is required for that.
     """
-    return getattr(_bot_config, "DETECTION_MODE", "hybrid") == "fiber_only"
+    return getattr(_bot_config, "DETECTION_MODE", "fiber_only") == "fiber_only"
+
+
+# Phase 10: one-time warning if the operator's env still pins the
+# legacy mode. The setting is honored by config.py's validator but no
+# longer changes detector behaviour in bot.py.
+if getattr(_bot_config, "DETECTION_MODE", "fiber_only") == "hybrid":
+    log.warning(
+        "DETECTION_MODE=hybrid is a compatibility shim after Phase 10; "
+        "legacy DOM detection fallbacks were removed. Detection runs "
+        "fiber-only regardless. Use source revert to restore legacy "
+        "behaviour. See docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md."
+    )
 
 # ── Screenshot directory ─────────────────────────────────────────────────
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -1590,11 +1610,12 @@ def send_chat_message(driver, bot_id, message, recipient=""):
 
 # ── Chat monitoring ───────────────────────────────────────────────────────
 
-# Phase 3 wiring: in `fiber_only` mode this function reads chat from the
-# React fiber tree via bot_fiber.capture_chat_messages and returns [] on
-# any non-OK outcome — no DOM scraping fallback. `hybrid` mode (the
-# default) keeps the original DOM 2-strategy walk below untouched.
-# See docs/DETECTION_ARCHITECTURE.md.
+# Phase 10: fiber is now the sole detection authority for chat. The
+# legacy DOM 2-strategy walker was removed; `DETECTION_MODE=hybrid` is
+# accepted by config.py as a compatibility shim but no longer
+# reintroduces DOM scraping. Source rollback (git revert) is the only
+# way to restore the legacy behaviour.
+# See docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md.
 
 def _fiber_chat_to_legacy(messages):
     """Translate bot_fiber chat dicts to the legacy {sender, text} shape."""
@@ -1613,73 +1634,25 @@ def _fiber_chat_to_legacy(messages):
 
 
 def read_chat_messages(driver, bot_id):
-    """Read visible messages from the Zoom chat panel.
+    """Read chat messages from the Zoom fiber tree (fiber-only authority).
 
     Returns a list of dicts: [{"sender": str, "text": str}, ...].
-    Assumes the chat panel is already open.
+    The chat panel does not need to be open — the fiber walker reads
+    state directly from React's internal store regardless of
+    virtualised-list state. Returns [] on any non-OK fiber outcome
+    (EMPTY / UNSUPPORTED / DEADLINE_EXCEEDED / PARSE_ERROR /
+    DRIVER_ERROR). No DOM fallback by design — Phase 10 removed the
+    legacy DOM 2-strategy walker.
     """
-    if _is_fiber_only_mode():
-        result = bot_fiber.capture_chat_messages(driver)
-        if result.is_ok:
-            return _fiber_chat_to_legacy(result.data)
-        # EMPTY / UNSUPPORTED / DEADLINE_EXCEEDED / PARSE_ERROR / DRIVER_ERROR
-        # all return [] in fiber_only — no DOM fallback.
-        if result.error:
-            log.debug(
-                "Bot %d: fiber chat returned %s: %s",
-                bot_id + 1, result.outcome.value, result.error,
-            )
-        return []
-    try:
-        messages = driver.execute_script("""
-            // Zoom web client renders chat messages in containers.
-            // Each message has a sender name and message text.
-            var results = [];
-            // Strategy 1: Look for chat message containers
-            var containers = document.querySelectorAll(
-                '[class*="chat-message"], [data-testid*="chat-message"], '
-                + '[class*="ChatMessage"], [class*="chat-item"]'
-            );
-            if (containers.length === 0) {
-                // Strategy 2: Look for message list items
-                containers = document.querySelectorAll(
-                    '[role="listitem"], [class*="message-item"], '
-                    + '[class*="msg-item"], [class*="chat-content"] > div'
-                );
-            }
-            containers.forEach(function(c) {
-                // Find sender name - usually in a span/div with specific class
-                var senderEl = c.querySelector(
-                    '[class*="sender"], [class*="Sender"], [class*="author"], '
-                    + '[class*="user-name"], [class*="display-name"], '
-                    + '[data-testid*="sender"], [class*="ChatSender"]'
-                );
-                // Find message text
-                var textEl = c.querySelector(
-                    '[class*="content"], [class*="Content"], [class*="text-message"], '
-                    + '[class*="message-body"], [class*="msg-text"], '
-                    + '[data-testid*="message-content"], [class*="ChatText"]'
-                );
-                if (!textEl) {
-                    // Fallback: get all text nodes excluding the sender
-                    textEl = c;
-                }
-                var sender = senderEl ? senderEl.textContent.trim() : "";
-                var text = textEl ? textEl.textContent.trim() : "";
-                // Remove sender name from text if it starts with it
-                if (sender && text.startsWith(sender)) {
-                    text = text.substring(sender.length).trim();
-                }
-                if (text) {
-                    results.push({sender: sender, text: text});
-                }
-            });
-            return results;
-        """)
-        return messages or []
-    except Exception as exc:
-        log.debug("Bot %d: Failed to read chat messages: %s", bot_id + 1, exc)
-        return []
+    result = bot_fiber.capture_chat_messages(driver)
+    if result.is_ok:
+        return _fiber_chat_to_legacy(result.data)
+    if result.error:
+        log.debug(
+            "Bot %d: fiber chat returned %s: %s",
+            bot_id + 1, result.outcome.value, result.error,
+        )
+    return []
 
 
 def monitor_and_reply(driver, bot_id, target_user, reply_template, last_seen_count=0):
@@ -2196,54 +2169,32 @@ def spam_reactions(driver, bot_id, reactions, count, delay=1.0):
 
 # ── Participant scanning & meeting state ──────────────────────────────────
 
-# Phase 3 wiring: `fiber_only` mode derives the count from
-# bot_fiber.capture_participants() so the toolbar DOM scrape below is
-# bypassed entirely. `hybrid` keeps the legacy DOM badge read.
+# Phase 10: count is derived directly from the fiber participant list;
+# the legacy toolbar-badge DOM scrape is gone. `DETECTION_MODE=hybrid`
+# no longer reintroduces DOM scraping.
 
 def get_participant_count(driver):
-    """Read participant count from the toolbar badge (authoritative count)."""
-    if _is_fiber_only_mode():
-        result = bot_fiber.capture_participants(driver)
-        if result.is_ok:
-            return len(result.data or [])
-        # EMPTY / DEADLINE / errors → 0. No DOM fallback in fiber_only.
-        if result.error:
-            log.debug(
-                "fiber participant-count returned %s: %s",
-                result.outcome.value, result.error,
-            )
-        return 0
-    try:
-        return driver.execute_script("""
-            var allBtns = document.querySelectorAll('button, [role="button"]');
-            for (var j = 0; j < allBtns.length; j++) {
-                var btn = allBtns[j];
-                var txt = btn.textContent || '';
-                var aria = btn.getAttribute('aria-label') || '';
-                if (!/participant/i.test(txt + aria)) continue;
-                var m = txt.trim().match(/^(\\d+)/);
-                if (m) return parseInt(m[1], 10);
-                var m2 = (txt + ' ' + aria).match(/\\((\\d+)\\)/);
-                if (m2) return parseInt(m2[1], 10);
-                var badge = btn.querySelector('[class*="badge"], [class*="number"], .footer-button-base__number');
-                if (badge && /^\\d+$/.test(badge.textContent.trim())) return parseInt(badge.textContent.trim(), 10);
-            }
-            var headers = document.querySelectorAll('[class*="participants-header"], .participants-section-container [class*="title"]');
-            for (var i = 0; i < headers.length; i++) {
-                var m3 = (headers[i].textContent || '').match(/\\((\\d+)\\)/);
-                if (m3) return parseInt(m3[1], 10);
-            }
-            return 0;
-        """) or 0
-    except Exception:
-        return 0
+    """Return participant count via fiber-only walk (no DOM badge scrape).
+
+    Returns ``0`` on any non-OK fiber outcome. Matches the count the
+    fiber participant list would return — by definition consistent
+    with ``get_participants``.
+    """
+    result = bot_fiber.capture_participants(driver)
+    if result.is_ok:
+        return len(result.data or [])
+    if result.error:
+        log.debug(
+            "fiber participant-count returned %s: %s",
+            result.outcome.value, result.error,
+        )
+    return 0
 
 
-# Phase 3 wiring: `fiber_only` mode routes through bot_fiber's 3-path
-# walker (with a 100 ms hard deadline) and translates the richer ZMT-style
-# return shape down to the legacy {name, role, videoOff, audioMuted,
-# handRaised, isSelf, _source} dict that existing callers expect. `hybrid`
-# keeps the legacy Path-A walker + DOM aria-label fallback unchanged.
+# Phase 10: fiber is the sole participant detection authority. The
+# legacy single-anchor fiber walker AND the participants-panel
+# aria-label DOM fallback are gone. `DETECTION_MODE=hybrid` no
+# longer reintroduces either path.
 
 def _fiber_participants_to_legacy(participants):
     """Translate bot_fiber participant dicts to the legacy shape.
@@ -2273,229 +2224,84 @@ def _fiber_participants_to_legacy(participants):
 
 
 def get_participants(driver, bot_id):
-    """Get full participant list with video/audio/hand status via React fiber + DOM fallback.
+    """Get the participant list via fiber-only walk (no DOM fallback).
 
-    Returns list of dicts: [{name, role, videoOff, audioMuted, handRaised, isSelf}, ...]
+    Returns a list of legacy-shape dicts:
+        [{"name", "role", "isSelf", "videoOff", "audioMuted",
+          "handRaised", "_source": "fiber"}, ...]
+
+    Returns ``[]`` on any non-OK fiber outcome. Phase 10 removed the
+    legacy single-anchor fiber Path-A walker and the participants-
+    panel aria-label DOM fallback that previously lived in this
+    function — ``bot_fiber.capture_participants()`` is now the sole
+    source of truth and runs the full ZMT 3-path walker with a 100 ms
+    hard deadline.
     """
-    if _is_fiber_only_mode():
-        result = bot_fiber.capture_participants(driver)
-        if result.is_ok:
-            legacy = _fiber_participants_to_legacy(result.data)
-            if legacy:
-                log.info(
-                    "Bot %d: fiber participants: %d (fiber_only)",
-                    bot_id + 1, len(legacy),
-                )
-            return legacy
-        if result.error:
-            log.debug(
-                "Bot %d: fiber participants returned %s: %s",
-                bot_id + 1, result.outcome.value, result.error,
+    result = bot_fiber.capture_participants(driver)
+    if result.is_ok:
+        legacy = _fiber_participants_to_legacy(result.data)
+        if legacy:
+            log.info(
+                "Bot %d: fiber participants: %d",
+                bot_id + 1, len(legacy),
             )
-        return []
-    try:
-        # Strategy 1: React fiber extraction (instant, gets ALL participants)
-        fiber_result = driver.execute_script("""
-            var containers = document.querySelectorAll(
-                '[class*="participants-ul"], [class*="virtuoso"], [role="list"], .participants-section-container'
-            );
-            var targetEl = null;
-            for (var i = 0; i < containers.length; i++) {
-                if (containers[i].children.length > 0) { targetEl = containers[i]; break; }
-            }
-            if (!targetEl) return null;
-
-            var fiberKey = Object.keys(targetEl).find(function(k) {
-                return k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0;
-            });
-            if (!fiberKey) return null;
-
-            function isParticipantObj(obj) {
-                if (!obj || typeof obj !== 'object' || obj.$$typeof) return false;
-                var keys = Object.keys(obj);
-                if (keys.length < 3) return false;
-                return keys.some(function(k) { return typeof obj[k] === 'string' && obj[k].length > 1 && obj[k].length < 100; });
-            }
-
-            function extractParticipant(obj) {
-                var keys = Object.keys(obj);
-                var name = '';
-                for (var i = 0; i < keys.length; i++) {
-                    if (typeof obj[keys[i]] === 'string') {
-                        if (/^(displayName|userName|name|display_name|user_name|screenName)$/i.test(keys[i])) {
-                            name = obj[keys[i]]; break;
-                        }
-                    }
-                }
-                if (!name) {
-                    for (var j = 0; j < keys.length; j++) {
-                        if (typeof obj[keys[j]] === 'string' && obj[keys[j]].length > 1 && obj[keys[j]].length < 80
-                            && !/^(http|\\/|#|rgb)/.test(obj[keys[j]])) {
-                            if (obj[keys[j]].length > name.length) name = obj[keys[j]];
-                        }
-                    }
-                }
-                var role = 'participant', isSelf = false, isVideoOn = null, isAudioMuted = null, handRaised = false;
-                for (var k = 0; k < keys.length; k++) {
-                    var kl = keys[k].toLowerCase();
-                    if ((kl.indexOf('host') !== -1 && kl.indexOf('co') === -1) && obj[keys[k]] === true) role = 'host';
-                    if ((kl.indexOf('cohost') !== -1 || kl.indexOf('co_host') !== -1) && obj[keys[k]] === true) role = 'cohost';
-                    if (kl === 'role' && obj[keys[k]] === 1) role = 'host';
-                    if (kl === 'role' && obj[keys[k]] === 2) role = 'cohost';
-                    if (/^(isMe|bMe|isSelf|isMyself)$/i.test(keys[k]) && obj[keys[k]] === true) isSelf = true;
-                    if (/^(bVideoOn|isVideoOn|videoOn)$/i.test(keys[k])) isVideoOn = !!obj[keys[k]];
-                    if (/^(muted|isAudioMuted|bMuted|audioMuted)$/i.test(keys[k])) isAudioMuted = !!obj[keys[k]];
-                    if (/^(bRaiseHand|handRaised|isRaiseHand|bHand)$/i.test(keys[k])) handRaised = !!obj[keys[k]];
-                }
-                return {
-                    name: name, role: role, isSelf: isSelf,
-                    videoOff: isVideoOn === null ? false : !isVideoOn,
-                    audioMuted: isAudioMuted, handRaised: handRaised,
-                    _source: 'fiber'
-                };
-            }
-
-            var fiber = targetEl[fiberKey];
-            var maxDepth = 50, depth = 0;
-            while (fiber && depth < maxDepth) {
-                var sources = [fiber.memoizedProps];
-                var hookState = fiber.memoizedState;
-                var hookDepth = 0;
-                while (hookState && hookDepth < 20) {
-                    if (hookState.memoizedState) sources.push(hookState.memoizedState);
-                    if (hookState.queue && hookState.queue.lastRenderedState) sources.push(hookState.queue.lastRenderedState);
-                    hookState = hookState.next;
-                    hookDepth++;
-                }
-                for (var s = 0; s < sources.length; s++) {
-                    var src = sources[s];
-                    if (!src || typeof src !== 'object') continue;
-                    var keysToCheck = Array.isArray(src) ? [{val: src}] :
-                        Object.keys(src).map(function(k) { return {val: src[k]}; });
-                    for (var c = 0; c < keysToCheck.length; c++) {
-                        var val = keysToCheck[c].val;
-                        if (!Array.isArray(val) || val.length < 3) continue;
-                        if (val[0] && val[0].$$typeof) continue;
-                        if (!isParticipantObj(val[0])) continue;
-                        var extracted = val.map(extractParticipant).filter(function(p) { return p.name.length > 1; });
-                        if (extracted.length >= 3) return extracted;
-                    }
-                }
-                fiber = fiber.return;
-                depth++;
-            }
-            return null;
-        """)
-
-        if fiber_result and len(fiber_result) >= 3:
-            log.info("Bot %d: Fiber extraction: %d participants (instant)", bot_id + 1, len(fiber_result))
-            return fiber_result
-
-        # Strategy 2: DOM aria-label parsing (requires participants panel open)
-        dom_result = driver.execute_script("""
-            var rows = document.querySelectorAll('.participants-li, [class*="participants-li"]');
-            if (rows.length < 1) return null;
-            var results = [];
-            var seen = {};
-            for (var i = 0; i < rows.length; i++) {
-                var label = rows[i].getAttribute('aria-label') || '';
-                if (!label || seen[label]) continue;
-                seen[label] = true;
-                var parts = label.split(',');
-                var nameRolePart = (parts[0] || '').trim();
-                var role = 'participant';
-                if (/\\(Host\\)/i.test(nameRolePart) && !/Co-host/i.test(nameRolePart)) role = 'host';
-                else if (/\\(Co-host\\)/i.test(nameRolePart)) role = 'cohost';
-                var isSelf = /\\(Me\\)/i.test(label) || /\\(You\\)/i.test(label);
-                var name = nameRolePart
-                    .replace(/\\s*\\(Host\\)/gi, '').replace(/\\s*\\(Co-host\\)/gi, '')
-                    .replace(/\\s*\\(Me\\)/gi, '').replace(/\\s*\\(You\\)/gi, '').trim();
-                var audioStr = (parts[1] || '').trim().toLowerCase();
-                var videoStr = (parts[2] || '').trim().toLowerCase();
-                results.push({
-                    name: name, role: role, isSelf: isSelf,
-                    videoOff: videoStr.indexOf('video off') !== -1 || label.indexOf(',video off') !== -1,
-                    audioMuted: audioStr.indexOf('muted') !== -1 || audioStr.indexOf('no audio') !== -1,
-                    handRaised: /raise\\s*hand/i.test(label),
-                    _source: 'dom'
-                });
-            }
-            return results.length > 0 ? results : null;
-        """)
-
-        if dom_result:
-            log.info("Bot %d: DOM extraction: %d participants", bot_id + 1, len(dom_result))
-            return dom_result
-
-        return []
-    except Exception as exc:
-        log.debug("Bot %d: Failed to get participants: %s", bot_id + 1, exc)
-        return []
+        return legacy
+    if result.error:
+        log.debug(
+            "Bot %d: fiber participants returned %s: %s",
+            bot_id + 1, result.outcome.value, result.error,
+        )
+    return []
 
 
 # ── Bot persistence / health check ────────────────────────────────────────
 
-# Phase 3 wiring: `fiber_only` mode uses bot_fiber.capture_meeting_state
-# (no XPATH text scrape, no leave-button DOM probe, no broad querySelector
-# fallback). `hybrid` keeps the legacy XPATH + leave-button + meeting-UI
-# fallback chain unchanged.
+# Phase 10: alive check is fiber-only. The locale-dependent XPATH
+# text scrape ("meeting has ended" etc.), the leave-button DOM
+# probe, and the broad meeting-UI querySelector fallback are gone.
+# Only the URL sanity check (locale-independent, non-DOM) remains as
+# a cheap pre-filter before the fiber probe.
 
 def check_bot_alive(driver):
-    """Return True if the bot appears to still be in a Zoom meeting."""
-    if _is_fiber_only_mode():
-        try:
-            url = driver.current_url or ""
-        except Exception:
-            return False
-        if "zoom.us" not in url:
-            return False
-        result = bot_fiber.capture_meeting_state(driver)
-        if result.is_ok:
-            data = result.data or {}
-            if data.get("meetingEnded") is True:
-                return False
-            if data.get("inMeeting") is True or data.get("inWaitingRoom") is True:
-                return True
-            # OK but no clear signal — fall through to URL-only verdict.
-            return True
-        # UNSUPPORTED / EMPTY / DEADLINE / errors: URL is still on zoom.us
-        # which is a cheap, locale-independent sanity check. Treat the
-        # session as alive — callers will re-probe next tick and a real
-        # death will surface as a URL change or a driver error.
-        if result.error:
-            log.debug(
-                "fiber meeting-state returned %s: %s",
-                result.outcome.value, result.error,
-            )
-        return True
+    """Return True if the bot appears to still be in a Zoom meeting.
 
+    Pure fiber-only detection authority:
+    1. URL sanity check (off zoom.us → dead).
+    2. Fiber meeting-state probe (``bot_fiber.capture_meeting_state``):
+       - ``meetingEnded`` → dead.
+       - ``inMeeting`` or ``inWaitingRoom`` → alive.
+       - ``OK`` with no clear signal → alive (URL still on zoom.us).
+    3. Non-OK fiber outcome on a zoom.us URL → alive (safe re-probe;
+       callers will tick again and a real death will surface as a
+       URL change or a driver error).
+
+    No DOM fallback. Phase 10 removed XPATH/leave-button/meeting-UI
+    selectors from this function.
+    """
     try:
-        # Check page title and URL — if redirected away from meeting, bot is dead
         url = driver.current_url or ""
-        if "zoom.us" not in url:
-            return False
-
-        # Check for "meeting has ended" text
-        ended_selectors = [
-            (By.XPATH, "//*[contains(text(), 'meeting has ended')]"),
-            (By.XPATH, "//*[contains(text(), 'Meeting has been ended')]"),
-            (By.XPATH, "//*[contains(text(), 'The host has ended')]"),
-            (By.XPATH, "//*[contains(text(), 'You have been removed')]"),
-        ]
-        if _find_element_multi(driver, ended_selectors):
-            return False
-
-        # If we can find the leave button, we're still in the meeting
-        _activate_toolbar(driver)
-        if _find_element_with_cache(driver, "leave_btn", _LEAVE_BTN_SELECTORS):
-            return True
-
-        # Fallback: check for any meeting UI element
-        return bool(driver.execute_script("""
-            return document.querySelector('[class*="meeting"], [class*="footer"]') !== null;
-        """))
     except Exception:
         return False
+    if "zoom.us" not in url:
+        return False
+    result = bot_fiber.capture_meeting_state(driver)
+    if result.is_ok:
+        data = result.data or {}
+        if data.get("meetingEnded") is True:
+            return False
+        if data.get("inMeeting") is True or data.get("inWaitingRoom") is True:
+            return True
+        # OK but no clear signal — URL still on zoom.us, treat as alive.
+        return True
+    # UNSUPPORTED / EMPTY / DEADLINE / errors: keep alive on zoom.us
+    # URL; next poll will re-probe and any real death will surface as
+    # a URL change or DRIVER_ERROR.
+    if result.error:
+        log.debug(
+            "fiber meeting-state returned %s: %s",
+            result.outcome.value, result.error,
+        )
+    return True
 
 
 def _click_join(driver, bot_id, bot_name, passcode):

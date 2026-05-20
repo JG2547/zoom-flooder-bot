@@ -365,18 +365,73 @@ class TestImportSmokeFiberOnly(_DryRunBase):
 # ── Phase-4 invariant ────────────────────────────────────────────────────
 
 
-class TestPhase4Invariants(_DryRunBase):
-    """Phase 4 must not regress the prior invariants."""
+class TestPhase10Invariants(_DryRunBase):
+    """Phase 10 deleted the legacy DOM fallbacks from the four
+    detection callers. These assertions enforce that detection-
+    specific legacy strings no longer appear in bot.py.
 
-    def test_legacy_hybrid_path_still_present(self):
-        """Phase 3-4 must NOT have deleted the hybrid path — the legacy
-        XPATH and DOM strategies must still exist in bot.py to keep
-        DETECTION_MODE='hybrid' as the safe default."""
+    NOTE: Some shared-string substrings (`'meeting has ended'`,
+    `[class*="chat-message"]`) legitimately remain in non-detection
+    code paths — the join-error selectors and the host-moderation
+    delete action respectively. Those are out of Phase 10 scope per
+    docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md §4.6. We assert
+    on substrings that were unique to the detection fallbacks."""
+
+    def test_legacy_detection_dom_selectors_absent(self):
         with open(os.path.join(_ROOT, "bot.py"), "r", encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn("'meeting has ended'", src)
-        self.assertIn("participants-li", src)
-        self.assertIn("[class*=\"chat-message\"]", src)
+        # Unique to the old get_participants DOM aria-label fallback.
+        # (The class name itself was the marker — no legitimate code
+        # outside that fallback referenced it.)
+        self.assertNotIn("participants-li", src)
+        # Unique to the old check_bot_alive XPATH end-of-meeting block.
+        # The join-error selectors at module top use "This meeting has
+        # been ended" and "You have been removed" individually but never
+        # this exact host-ended phrase.
+        self.assertNotIn("The host has ended", src)
+        # Unique to the old check_bot_alive meeting-UI fallback:
+        self.assertNotIn('[class*="meeting"], [class*="footer"]', src)
+        # Unique to the old get_participant_count toolbar badge scrape:
+        self.assertNotIn(".footer-button-base__number", src)
+        self.assertNotIn('participants-section-container [class*="title"]', src)
+
+    def test_bot_imports_bot_fiber(self):
+        """The fiber adapter remains imported."""
+        with open(os.path.join(_ROOT, "bot.py"), "r", encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("import bot_fiber", src)
+
+    def test_four_detection_callers_are_short(self):
+        """The four detection callers are one-liners now (modulo
+        docstrings + error mapping). If any of them grows to embed a
+        JS payload again, this assertion will flag the regression.
+
+        Counts only the function-body lines between the `def` and the
+        next blank-line-at-column-0 (which terminates a top-level
+        function in this file's style)."""
+        import re
+        with open(os.path.join(_ROOT, "bot.py"), "r", encoding="utf-8") as fh:
+            src = fh.read()
+        for name in ("read_chat_messages", "get_participant_count",
+                     "get_participants", "check_bot_alive"):
+            m = re.search(rf"^def {name}\b.*?$\n", src, flags=re.M)
+            self.assertIsNotNone(m, f"missing def for {name}")
+            start = m.end()
+            # Find next "^def " at column 0 — end of this function.
+            n = re.search(r"^def \w+", src[start:], flags=re.M)
+            body = src[start:start + n.start()] if n else src[start:]
+            # Lines that look like JS bodies. None of the four
+            # post-Phase-10 callers should contain `querySelectorAll`,
+            # `By.XPATH`, `find_element_with_cache`, or
+            # `find_element_multi`.
+            self.assertNotIn("querySelectorAll", body,
+                             msg=f"{name} body should not contain querySelectorAll")
+            self.assertNotIn("By.XPATH", body,
+                             msg=f"{name} body should not contain By.XPATH")
+            self.assertNotIn("_find_element_with_cache", body,
+                             msg=f"{name} body should not contain _find_element_with_cache")
+            self.assertNotIn("_find_element_multi", body,
+                             msg=f"{name} body should not contain _find_element_multi")
 
     def test_default_detection_mode_is_fiber_only(self):
         # Phase 7: on-disk default flipped to "fiber_only". Read the

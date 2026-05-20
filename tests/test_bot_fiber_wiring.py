@@ -93,26 +93,54 @@ class _FiberWiringBase(unittest.TestCase):
             config.DETECTION_MODE = self._prev_mode
 
 
-# ── Hybrid: no bot_fiber calls ───────────────────────────────────────────
+# ── Hybrid mode is now a compatibility shim ─────────────────────────────
+#
+# Phase 10 removed the legacy DOM fallbacks. `DETECTION_MODE=hybrid`
+# is still accepted by config.py (so the env-var rollback command
+# doesn't error out for operators with that muscle memory) but the
+# detection callers always route through bot_fiber regardless of
+# mode. Source rollback (`git revert`) is required to restore DOM
+# behaviour.
 
 
-class TestHybridDoesNotCallFiber(_FiberWiringBase):
+class TestHybridStillCallsFiberAfterPhase10(_FiberWiringBase):
+    """After Phase 10, hybrid is a no-op compat shim — fiber is the
+    sole detection authority."""
 
-    def test_get_participant_count_hybrid_does_not_call_bot_fiber(self):
+    def test_get_participant_count_in_hybrid_still_calls_bot_fiber(self):
+        """Setting DETECTION_MODE=hybrid must still drive the call
+        through bot_fiber.capture_participants; no DOM fallback runs.
+
+        We patch the capture wrapper so the sentinel driver's
+        DOM-leak guard is never reached."""
         self._set_mode("hybrid")
-        with patch.object(bot_fiber, "capture_participants") as cp, \
-             patch.object(bot_fiber, "capture_chat_messages") as cc, \
-             patch.object(bot_fiber, "capture_meeting_state") as cm:
-            try:
-                bot.get_participant_count(_SentinelDriver())
-            except AssertionError:
-                # Legacy DOM path triggered execute_script on our sentinel
-                # driver — that's the legacy behavior, the point here is
-                # that bot_fiber wrappers were not called.
-                pass
-            cp.assert_not_called()
-            cc.assert_not_called()
-            cm.assert_not_called()
+        canned = bot_fiber.FiberResult.ok_result([
+            {"displayName": "Solo", "isMe": True},
+        ])
+        with patch.object(bot_fiber, "capture_participants", return_value=canned) as cp:
+            count = bot.get_participant_count(_SentinelDriver())
+        cp.assert_called_once()
+        self.assertEqual(count, 1)
+
+    def test_read_chat_messages_in_hybrid_calls_bot_fiber(self):
+        self._set_mode("hybrid")
+        canned = bot_fiber.FiberResult.ok_result([
+            {"sender": "A", "text": "hi"},
+        ])
+        with patch.object(bot_fiber, "capture_chat_messages", return_value=canned) as cc:
+            out = bot.read_chat_messages(_SentinelDriver(), bot_id=0)
+        cc.assert_called_once()
+        self.assertEqual(out, [{"sender": "A", "text": "hi"}])
+
+    def test_check_bot_alive_in_hybrid_calls_bot_fiber(self):
+        self._set_mode("hybrid")
+        canned = bot_fiber.FiberResult.ok_result({
+            "inMeeting": True, "inWaitingRoom": False, "meetingEnded": False,
+        })
+        with patch.object(bot_fiber, "capture_meeting_state", return_value=canned) as cm:
+            alive = bot.check_bot_alive(_SentinelDriver())
+        cm.assert_called_once()
+        self.assertTrue(alive)
 
 
 # ── Fiber-only: read_chat_messages ───────────────────────────────────────
