@@ -212,6 +212,58 @@ That document is a written plan and requires
 `APPROVE_STANDALONE_BOT_FIBER_ONLY_OWNED_MEETING_SMOKE_TEST_EXECUTION`
 to actually run.
 
+### Alternative self-test when an owned meeting is unavailable
+
+When you can't (or don't want to) schedule an owned-meeting test, run
+the non-live self-test CLI. It exercises the same four wired
+`bot.py` callers through fake drivers + JSON fixtures and emits a
+sanitized PASS/FAIL report.
+
+```bash
+# Quick interactive run (prints per-check status, exits 0 on full pass)
+python tools/fiber_only_self_test.py
+
+# Same, but also write a sanitized Markdown report
+python tools/fiber_only_self_test.py --write-report
+
+# Also run the unit suite that covers the same surface from multiple angles
+python -m unittest discover -s tests -p "test_*fiber*.py" -v
+```
+
+The CLI:
+
+- sets `config.DETECTION_MODE = "fiber_only"` in-process only — the
+  on-disk default in `config.py` stays `hybrid`,
+- patches `bot_fiber.capture_*` to return canned `FiberResult` values
+  derived from `tests/fixtures/*.json`,
+- exercises `read_chat_messages`, `get_participant_count`,
+  `get_participants`, `check_bot_alive`,
+- raises `LegacyDomLeak` if any of the wrappers leak into a DOM
+  selector method in fiber-only mode,
+- writes a sanitized report to
+  `reports/self_tests/fiber_only_self_test_<YYYYMMDD_HHMMSS>.md` —
+  never includes meeting IDs, passcodes, real participant names,
+  real chat content, env values, or tokens.
+
+This does **not** replace empirical owned-meeting validation. The CLI
+proves the Python-side wiring + legacy mapping; it cannot prove that
+the React fiber tree in the current Zoom Web SDK build still exposes
+the fields the walkers expect. Until the owned-meeting smoke test
+runs and passes, `DETECTION_MODE` should stay at the `hybrid` default
+in production.
+
+Conservative criteria for advancing without a live meeting:
+
+- All 12 self-test checks `PASS`.
+- All `tests/test_*fiber*.py` checks `PASS` (currently 73, growing).
+- No `LegacyDomLeak` ever raised across the whole suite.
+- Sanitized report secret-scan clean.
+
+If those four hold, a default-flip plan may be authored under
+`APPROVE_STANDALONE_BOT_FIBER_ONLY_DEFAULT_FLIP_PLAN_WITHOUT_LIVE_MEETING`.
+The owned-meeting test stays available as the stricter gate and
+remains the recommended path before flipping the default.
+
 ---
 
 ## 7. Acceptance criteria for fiber-only readiness

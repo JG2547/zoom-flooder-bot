@@ -24,6 +24,9 @@ proxies.txt
 default.txt
 raids.db
 
+# Generated self-test reports (run-local diagnostics; not committed)
+reports/
+
 # IDE / editor
 .vscode/
 .idea/
