@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Resilient Zoom SDK Client</title>
+  <link rel="stylesheet" href="https://source.zoom.us/3.13.2/css/bootstrap.css">
+  <link rel="stylesheet" href="https://source.zoom.us/3.13.2/css/react-select.css">
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 1.5rem; max-width: 960px; margin: 0 auto; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; margin-bottom: .5rem; }
+    #status { padding: .5rem .9rem; border-radius: 6px; background: #eef; margin: .75rem 0; font-weight: 600; }
+    #status[data-state="Connected"]    { background: #d1f4d1; }
+    #status[data-state="Reconnecting"] { background: #ffe9b3; }
+    #status[data-state="Failed"],
+    #status[data-state="Closed"]       { background: #f8c8c8; }
+    button { margin-right: .5rem; padding: .4rem .9rem; }
+    #log { height: 240px; overflow-y: auto; background: #111; color: #eee;
+           padding: .75rem; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+           border-radius: 6px; white-space: pre; }
+    #meetingSDKElement { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Resilient Zoom Meeting SDK client</h1>
+  <p>Single persistent identity, exponential-backoff reconnect, state resume on drop.</p>
+
+  <div id="status" data-state="Idle">Idle</div>
+  <button id="join-btn">Join</button>
+  <button id="leave-btn">Leave</button>
+  <button id="reset-btn">Clear persisted state</button>
+
+  <h3>Log</h3>
+  <pre id="log"></pre>
+
+  <div id="meetingSDKElement"></div>
+
+  <script src="https://source.zoom.us/3.13.2/zoom-meeting-embedded-3.13.2.min.js"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
