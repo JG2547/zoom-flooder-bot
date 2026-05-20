@@ -271,6 +271,14 @@ implementation authorization. The operator must issue
 `APPROVE_STANDALONE_BOT_FIBER_ONLY_DEFAULT_FLIP_IMPLEMENTATION`
 separately before the on-disk default in `config.py` is changed.
 
+**Status:** the flip is implemented in commit `280cc44`. The on-disk
+default is now `"fiber_only"`; `"hybrid"` remains a permitted choice
+via env override. The first stable cycle after the flip is monitored
+per [`docs/FIBER_ONLY_POST_FLIP_MONITORING.md`](FIBER_ONLY_POST_FLIP_MONITORING.md),
+which documents the signals to watch, the three-tier rollback
+procedure, and the exit criteria that gate the future Phase 5
+legacy-DOM cleanup.
+
 ---
 
 ## 7. Acceptance criteria for fiber-only readiness

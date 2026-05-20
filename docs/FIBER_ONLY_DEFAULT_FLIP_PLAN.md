@@ -1,4 +1,14 @@
-# Fiber-Only Default-Flip Plan (Phase 7 — No-Execution Plan)
+# Fiber-Only Default-Flip Plan (Phase 7)
+
+> **Status: implemented in commit `280cc44`.** The on-disk default
+> for `config.DETECTION_MODE` is now `"fiber_only"`. The runtime
+> behaviour after the flip is monitored per
+> [`docs/FIBER_ONLY_POST_FLIP_MONITORING.md`](FIBER_ONLY_POST_FLIP_MONITORING.md).
+> Hybrid remains available via `DETECTION_MODE=hybrid` env override.
+> The remainder of this document is preserved verbatim as the plan
+> that authorized the flip.
+
+---
 
 Plan-only document describing the future change from
 `DETECTION_MODE = "hybrid"` to `DETECTION_MODE = "fiber_only"` as the
