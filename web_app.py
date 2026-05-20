@@ -20,7 +20,22 @@ from scheduler import RaidScheduler
 # ── App setup ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24)
-socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+
+# Restrict SocketIO CORS to localhost by default — set DASHBOARD_CORS_ORIGINS
+# to a comma-separated allowlist (or "*" to opt back into wide-open) when
+# exposing the dashboard beyond the local machine. The dashboard has no
+# auth layer, so `*` lets anyone reachable trigger start/stop/deploy.
+_cors_env = os.environ.get("DASHBOARD_CORS_ORIGINS", "").strip()
+if _cors_env == "*":
+    _cors_origins = "*"
+elif _cors_env:
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    _cors_origins = [
+        "http://localhost:5000", "http://127.0.0.1:5000",
+        "http://localhost", "http://127.0.0.1",
+    ]
+socketio = SocketIO(app, async_mode="threading", cors_allowed_origins=_cors_origins)
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 LOG_FILE = "bot.log"
@@ -441,5 +456,16 @@ if __name__ == "__main__":
         except Exception as exc:
             log.warning("Telegram bot failed to start: %s", exc)
 
-    log.info("Starting web dashboard on http://localhost:5000")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False, load_dotenv=False)
+    # Bind to 127.0.0.1 by default — the dashboard has no auth, so a 0.0.0.0
+    # bind exposes start/stop/deploy to anything on the LAN. Set
+    # DASHBOARD_HOST=0.0.0.0 explicitly when LAN access is intended.
+    host = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
+    port = int(os.environ.get("DASHBOARD_PORT", "5000"))
+    if host == "0.0.0.0":
+        log.warning(
+            "Dashboard bound to 0.0.0.0 with no auth — anyone on the network "
+            "can launch bots. Restrict via DASHBOARD_HOST=127.0.0.1 unless "
+            "you've added an auth layer."
+        )
+    log.info("Starting web dashboard on http://%s:%d", host, port)
+    socketio.run(app, host=host, port=port, debug=False, load_dotenv=False)
