@@ -21,7 +21,19 @@ from selenium.common.exceptions import (
 
 from browser import create_driver, quit_driver
 
+import bot_fiber
+import config as _bot_config
+
 log = logging.getLogger(__name__)
+
+
+def _is_fiber_only_mode():
+    """Return True iff config.DETECTION_MODE is set to 'fiber_only'.
+
+    Read through ``_bot_config`` (not a snapshot at import time) so tests
+    can monkeypatch the constant without re-importing this module.
+    """
+    return getattr(_bot_config, "DETECTION_MODE", "hybrid") == "fiber_only"
 
 # ── Screenshot directory ─────────────────────────────────────────────────
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -1578,10 +1590,27 @@ def send_chat_message(driver, bot_id, message, recipient=""):
 
 # ── Chat monitoring ───────────────────────────────────────────────────────
 
-# TODO(fiber-only, Phase 3): replace the DOM 2-strategy walk below with a
-# fiber chat walker matching the ZMT design — see
-# docs/DETECTION_ARCHITECTURE.md and the participant walker in get_participants.
-# Gate the new path on config.DETECTION_MODE == "fiber_only".
+# Phase 3 wiring: in `fiber_only` mode this function reads chat from the
+# React fiber tree via bot_fiber.capture_chat_messages and returns [] on
+# any non-OK outcome — no DOM scraping fallback. `hybrid` mode (the
+# default) keeps the original DOM 2-strategy walk below untouched.
+# See docs/DETECTION_ARCHITECTURE.md.
+
+def _fiber_chat_to_legacy(messages):
+    """Translate bot_fiber chat dicts to the legacy {sender, text} shape."""
+    legacy = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        text = m.get("text", "")
+        if not text:
+            continue
+        legacy.append({
+            "sender": m.get("sender", ""),
+            "text": text,
+        })
+    return legacy
+
 
 def read_chat_messages(driver, bot_id):
     """Read visible messages from the Zoom chat panel.
@@ -1589,6 +1618,18 @@ def read_chat_messages(driver, bot_id):
     Returns a list of dicts: [{"sender": str, "text": str}, ...].
     Assumes the chat panel is already open.
     """
+    if _is_fiber_only_mode():
+        result = bot_fiber.capture_chat_messages(driver)
+        if result.is_ok:
+            return _fiber_chat_to_legacy(result.data)
+        # EMPTY / UNSUPPORTED / DEADLINE_EXCEEDED / PARSE_ERROR / DRIVER_ERROR
+        # all return [] in fiber_only — no DOM fallback.
+        if result.error:
+            log.debug(
+                "Bot %d: fiber chat returned %s: %s",
+                bot_id + 1, result.outcome.value, result.error,
+            )
+        return []
     try:
         messages = driver.execute_script("""
             // Zoom web client renders chat messages in containers.
@@ -2155,13 +2196,23 @@ def spam_reactions(driver, bot_id, reactions, count, delay=1.0):
 
 # ── Participant scanning & meeting state ──────────────────────────────────
 
-# TODO(fiber-only, Phase 3): derive count from get_participants() fiber result
-# instead of scraping the toolbar badge. Toolbar DOM drifts with each Zoom
-# class-name churn; the fiber list is authoritative. See
-# docs/DETECTION_ARCHITECTURE.md §6.
+# Phase 3 wiring: `fiber_only` mode derives the count from
+# bot_fiber.capture_participants() so the toolbar DOM scrape below is
+# bypassed entirely. `hybrid` keeps the legacy DOM badge read.
 
 def get_participant_count(driver):
     """Read participant count from the toolbar badge (authoritative count)."""
+    if _is_fiber_only_mode():
+        result = bot_fiber.capture_participants(driver)
+        if result.is_ok:
+            return len(result.data or [])
+        # EMPTY / DEADLINE / errors → 0. No DOM fallback in fiber_only.
+        if result.error:
+            log.debug(
+                "fiber participant-count returned %s: %s",
+                result.outcome.value, result.error,
+            )
+        return 0
     try:
         return driver.execute_script("""
             var allBtns = document.querySelectorAll('button, [role="button"]');
@@ -2188,19 +2239,60 @@ def get_participant_count(driver):
         return 0
 
 
-# TODO(fiber-only, Phase 2/3): the fiber walker below is Path A only (walk up
-# from a single anchor) with depth 50 and NO time deadline. Replace with the
-# ZMT 3-path walker (zoom_auto_kick.py:3092-3370 — paths A/B/C plus 40-100 ms
-# hard deadline) and switch the return type to FiberResult so callers can
-# distinguish OK([]) from EMPTY / DEADLINE_EXCEEDED. The DOM aria-label
-# fallback (~ line 2284 below) becomes unreachable once DETECTION_MODE is
-# "fiber_only". See docs/DETECTION_ARCHITECTURE.md §2-3.
+# Phase 3 wiring: `fiber_only` mode routes through bot_fiber's 3-path
+# walker (with a 100 ms hard deadline) and translates the richer ZMT-style
+# return shape down to the legacy {name, role, videoOff, audioMuted,
+# handRaised, isSelf, _source} dict that existing callers expect. `hybrid`
+# keeps the legacy Path-A walker + DOM aria-label fallback unchanged.
+
+def _fiber_participants_to_legacy(participants):
+    """Translate bot_fiber participant dicts to the legacy shape.
+
+    Legacy callers consume {name, role, videoOff, audioMuted, handRaised,
+    isSelf, _source}. bot_fiber returns the richer ZMT shape — we discard
+    fields the existing code does not consume so callers stay stable.
+    """
+    legacy = []
+    for p in participants or []:
+        if not isinstance(p, dict):
+            continue
+        name = p.get("displayName") or p.get("name") or ""
+        if not name:
+            continue
+        is_video_on = p.get("isVideoOn")
+        legacy.append({
+            "name": name,
+            "role": p.get("role", "participant"),
+            "isSelf": bool(p.get("isMe", False)),
+            "videoOff": False if is_video_on is None else (not is_video_on),
+            "audioMuted": bool(p.get("isMuted", False)),
+            "handRaised": bool(p.get("isHandRaised", False)),
+            "_source": "fiber",
+        })
+    return legacy
+
 
 def get_participants(driver, bot_id):
     """Get full participant list with video/audio/hand status via React fiber + DOM fallback.
 
     Returns list of dicts: [{name, role, videoOff, audioMuted, handRaised, isSelf}, ...]
     """
+    if _is_fiber_only_mode():
+        result = bot_fiber.capture_participants(driver)
+        if result.is_ok:
+            legacy = _fiber_participants_to_legacy(result.data)
+            if legacy:
+                log.info(
+                    "Bot %d: fiber participants: %d (fiber_only)",
+                    bot_id + 1, len(legacy),
+                )
+            return legacy
+        if result.error:
+            log.debug(
+                "Bot %d: fiber participants returned %s: %s",
+                bot_id + 1, result.outcome.value, result.error,
+            )
+        return []
     try:
         # Strategy 1: React fiber extraction (instant, gets ALL participants)
         fiber_result = driver.execute_script("""
@@ -2343,14 +2435,40 @@ def get_participants(driver, bot_id):
 
 # ── Bot persistence / health check ────────────────────────────────────────
 
-# TODO(fiber-only, Phase 3): the XPATH end-of-meeting probes below are
-# locale-dependent (en-US text match) and brittle. Replace with a fiber
-# meeting-state probe that reads meetingStatus / connectionStatus directly
-# from the SDK store. Keep the URL sanity check as a cheap pre-filter.
-# See docs/DETECTION_ARCHITECTURE.md §6.
+# Phase 3 wiring: `fiber_only` mode uses bot_fiber.capture_meeting_state
+# (no XPATH text scrape, no leave-button DOM probe, no broad querySelector
+# fallback). `hybrid` keeps the legacy XPATH + leave-button + meeting-UI
+# fallback chain unchanged.
 
 def check_bot_alive(driver):
     """Return True if the bot appears to still be in a Zoom meeting."""
+    if _is_fiber_only_mode():
+        try:
+            url = driver.current_url or ""
+        except Exception:
+            return False
+        if "zoom.us" not in url:
+            return False
+        result = bot_fiber.capture_meeting_state(driver)
+        if result.is_ok:
+            data = result.data or {}
+            if data.get("meetingEnded") is True:
+                return False
+            if data.get("inMeeting") is True or data.get("inWaitingRoom") is True:
+                return True
+            # OK but no clear signal — fall through to URL-only verdict.
+            return True
+        # UNSUPPORTED / EMPTY / DEADLINE / errors: URL is still on zoom.us
+        # which is a cheap, locale-independent sanity check. Treat the
+        # session as alive — callers will re-probe next tick and a real
+        # death will surface as a URL change or a driver error.
+        if result.error:
+            log.debug(
+                "fiber meeting-state returned %s: %s",
+                result.outcome.value, result.error,
+            )
+        return True
+
     try:
         # Check page title and URL — if redirected away from meeting, bot is dead
         url = driver.current_url or ""

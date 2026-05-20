@@ -272,17 +272,21 @@ class TestCaptureMeetingState(unittest.TestCase):
         self.assertEqual(r.outcome, FiberOutcome.PARSE_ERROR)
 
 
-# ── Caller-flip safety ───────────────────────────────────────────────────
+# ── Caller-flip status ───────────────────────────────────────────────────
 
 
-class TestNoCallerFlips(unittest.TestCase):
-    """Phase 2 must not touch any existing detection caller in bot.py."""
+class TestCallerWiringPresent(unittest.TestCase):
+    """Phase 3 wires bot.py callers through bot_fiber behind DETECTION_MODE.
 
-    def test_bot_py_does_not_import_bot_fiber(self):
+    Phase 2 asserted the opposite invariant (no import yet). After Phase 3
+    the wiring import MUST be present so the four detection callers can
+    route through the fiber adapter.
+    """
+
+    def test_bot_py_imports_bot_fiber(self):
         with open(os.path.join(_ROOT, "bot.py"), "r", encoding="utf-8") as fh:
             src = fh.read()
-        self.assertNotIn("import bot_fiber", src)
-        self.assertNotIn("from bot_fiber", src)
+        self.assertIn("import bot_fiber", src)
 
 
 if __name__ == "__main__":
