@@ -1453,6 +1453,11 @@ def send_chat_message(driver, bot_id, message, recipient=""):
 
 # ── Chat monitoring ───────────────────────────────────────────────────────
 
+# TODO(fiber-only, Phase 3): replace the DOM 2-strategy walk below with a
+# fiber chat walker matching the ZMT design — see
+# docs/DETECTION_ARCHITECTURE.md and the participant walker in get_participants.
+# Gate the new path on config.DETECTION_MODE == "fiber_only".
+
 def read_chat_messages(driver, bot_id):
     """Read visible messages from the Zoom chat panel.
 
@@ -1782,6 +1787,12 @@ def spam_reactions(driver, bot_id, reactions, count, delay=1.0):
 
 
 # ── Bot persistence / health check ────────────────────────────────────────
+
+# TODO(fiber-only, Phase 3): the XPATH end-of-meeting probes below are
+# locale-dependent (en-US text match) and brittle. Replace with a fiber
+# meeting-state probe that reads meetingStatus / connectionStatus directly
+# from the SDK store. Keep the URL sanity check as a cheap pre-filter.
+# See docs/DETECTION_ARCHITECTURE.md §6.
 
 def check_bot_alive(driver):
     """Return True if the bot appears to still be in a Zoom meeting."""

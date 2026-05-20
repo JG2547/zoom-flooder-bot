@@ -14,6 +14,27 @@ NAMES_FILE = "names.txt"
 PROXIES_FILE = "proxies.txt"
 FALLBACK_NAMES = ["User", "Participant", "Student", "Guest", "Attendee"]
 
+# Detection-architecture flag. Declared here for the upcoming fiber-only
+# migration (see docs/DETECTION_ARCHITECTURE.md). Not yet consumed by any
+# code path — current detection is hybrid fiber-first → DOM fallback in
+# bot.py's get_participants. Phase 2 of the migration will read this from
+# env and gate the legacy DOM paths off when set to "fiber_only".
+#
+# Allowed values:
+#   "hybrid"      — fiber-first, DOM fallback on miss (current behavior).
+#   "fiber_only"  — fiber-first, return empty on miss (matches the ZMT
+#                   Playwright adapter at Botify-Network
+#                   services/zmt-electron-client/agent/src/enforcement/
+#                   adapters/PlaywrightAdapter.js).
+DETECTION_MODE = os.environ.get("DETECTION_MODE", "hybrid").strip().lower()
+_DETECTION_MODES = ("hybrid", "fiber_only")
+if DETECTION_MODE not in _DETECTION_MODES:
+    log.warning(
+        "DETECTION_MODE=%r is not one of %s — falling back to 'hybrid'.",
+        DETECTION_MODE, _DETECTION_MODES,
+    )
+    DETECTION_MODE = "hybrid"
+
 # RAM estimate per Chrome instance in MB
 RAM_PER_BOT_MB = 200
 RAM_WARN_THRESHOLD_MB = 4000
