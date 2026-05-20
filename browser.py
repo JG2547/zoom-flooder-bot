@@ -148,7 +148,11 @@ def _build_chrome_options(proxy=None):
 
 
 def create_driver(proxy=None):
-    """Create and return a configured Chrome WebDriver instance."""
+    """Create and return a configured Chrome WebDriver instance.
+
+    Browser data (cookies, cache, storage) is wiped immediately after creation
+    to ensure a clean state before any navigation.
+    """
     options = _build_chrome_options(proxy=proxy)
     service = Service(_resolve_driver_path())
 
@@ -157,4 +161,52 @@ def create_driver(proxy=None):
 
     driver = webdriver.Chrome(service=service, options=options)
     driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+
+    # Wipe any residual browser data from the profile on creation
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+    except Exception:
+        pass
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+    except Exception:
+        pass
+
     return driver
+
+
+def quit_driver(driver):
+    """Wipe all browser data then quit the driver.
+
+    Use this instead of driver.quit() directly to ensure cookies, localStorage,
+    sessionStorage, and cache are cleared before the browser process exits.
+    """
+    if driver is None:
+        return
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+    try:
+        driver.execute_script("""
+            try { window.localStorage.clear(); } catch(e) {}
+            try { window.sessionStorage.clear(); } catch(e) {}
+        """)
+    except Exception:
+        pass
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+    except Exception:
+        pass
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+    except Exception:
+        pass
+    try:
+        driver.quit()
+    except Exception:
+        pass

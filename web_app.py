@@ -285,6 +285,11 @@ def handle_start(data):
             chat_repeat_delay=data.get("chat_repeat_delay", 2.0),
             chat_monitor_target=data.get("chat_monitor_target", ""),
             chat_monitor_reply=data.get("chat_monitor_reply", ""),
+            spam_monitor_enabled=data.get("spam_monitor_enabled", False),
+            spam_threshold=data.get("spam_threshold", 10),
+            spam_cooldown=data.get("spam_cooldown", 90),
+            spam_attempt_delete=data.get("spam_attempt_delete", True),
+            spam_log_enabled=data.get("spam_log_enabled", True),
         )
         manager.start(cfg)
         emit("status", {"ok": True, "message": "Launch started."})
@@ -319,6 +324,11 @@ def handle_stage(data):
             chat_repeat_delay=data.get("chat_repeat_delay", 2.0),
             chat_monitor_target=data.get("chat_monitor_target", ""),
             chat_monitor_reply=data.get("chat_monitor_reply", ""),
+            spam_monitor_enabled=data.get("spam_monitor_enabled", False),
+            spam_threshold=data.get("spam_threshold", 10),
+            spam_cooldown=data.get("spam_cooldown", 90),
+            spam_attempt_delete=data.get("spam_attempt_delete", True),
+            spam_log_enabled=data.get("spam_log_enabled", True),
         )
         manager.stage(cfg)
         emit("status", {"ok": True, "message": "Staging started — bots will wait for deploy."})

@@ -36,6 +36,11 @@ document.addEventListener("DOMContentLoaded", () => {
         chatRepeatDelay: document.getElementById("chat-repeat-delay"),
         chatMonitorTarget: document.getElementById("chat-monitor-target"),
         chatMonitorReply: document.getElementById("chat-monitor-reply"),
+        spamMonitorEnabled: document.getElementById("spam-monitor-enabled"),
+        spamThreshold: document.getElementById("spam-threshold"),
+        spamCooldown: document.getElementById("spam-cooldown"),
+        spamAttemptDelete: document.getElementById("spam-attempt-delete"),
+        spamLogEnabled: document.getElementById("spam-log-enabled"),
     };
 
     const screenshotGrid = document.getElementById("screenshot-grid");
@@ -173,6 +178,11 @@ document.addEventListener("DOMContentLoaded", () => {
             chat_repeat_delay: parseFloat(inputs.chatRepeatDelay.value) || 2.0,
             chat_monitor_target: inputs.chatMonitorTarget.value,
             chat_monitor_reply: inputs.chatMonitorReply.value,
+            spam_monitor_enabled: inputs.spamMonitorEnabled.checked,
+            spam_threshold: parseInt(inputs.spamThreshold.value) || 10,
+            spam_cooldown: parseInt(inputs.spamCooldown.value) || 0,
+            spam_attempt_delete: inputs.spamAttemptDelete.checked,
+            spam_log_enabled: inputs.spamLogEnabled.checked,
         };
     }
 

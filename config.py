@@ -12,7 +12,11 @@ log = logging.getLogger(__name__)
 DEFAULT_CONFIG_FILE = "default.txt"
 NAMES_FILE = "names.txt"
 PROXIES_FILE = "proxies.txt"
+SPAM_RESPONSES_FILE = "spam_responses.txt"
+SPAM_LOG_FILE = "spam_log.jsonl"
 FALLBACK_NAMES = ["User", "Participant", "Student", "Guest", "Attendee"]
+DEFAULT_SPAM_THRESHOLD = 10
+DEFAULT_SPAM_COOLDOWN = 90
 
 # Detection-architecture flag. Declared here for the upcoming fiber-only
 # migration (see docs/DETECTION_ARCHITECTURE.md). Not yet consumed by any
@@ -74,6 +78,19 @@ def load_names(path=NAMES_FILE):
     except FileNotFoundError:
         log.warning("'%s' not found, using fallback names.", path)
         return list(FALLBACK_NAMES)
+
+
+def load_spam_responses(path=SPAM_RESPONSES_FILE):
+    """Load spam-monitor reply pool from file. Blank lines and `#` comments are skipped."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+        if not lines:
+            log.warning("'%s' is empty — spam monitor will have no replies.", path)
+        return lines
+    except FileNotFoundError:
+        log.warning("'%s' not found — spam monitor will have no replies.", path)
+        return []
 
 
 def load_proxies(path=PROXIES_FILE):
@@ -166,7 +183,10 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
                   reaction_delay=1.0, persist_mode=False, persist_interval=30,
                   persist_chat_interval=0, persist_reaction_interval=0,
                   chat_repeat_count=0, chat_repeat_delay=2.0,
-                  chat_monitor_target="", chat_monitor_reply=""):
+                  chat_monitor_target="", chat_monitor_reply="",
+                  spam_monitor_enabled=False, spam_threshold=DEFAULT_SPAM_THRESHOLD,
+                  spam_cooldown=DEFAULT_SPAM_COOLDOWN, spam_attempt_delete=True,
+                  spam_log_enabled=True):
     """Build a config dict from explicit values — no input() calls."""
     names = load_names()
 
@@ -210,6 +230,12 @@ def build_config(meeting_id, passcode, thread_count, num_bots, custom_name="",
         "chat_repeat_delay": max(0.5, float(chat_repeat_delay)),
         "chat_monitor_target": str(chat_monitor_target).strip() if chat_monitor_target else "",
         "chat_monitor_reply": str(chat_monitor_reply).strip() if chat_monitor_reply else "",
+        "spam_monitor_enabled": bool(spam_monitor_enabled),
+        "spam_threshold": max(1, int(spam_threshold)),
+        "spam_responses": load_spam_responses() if spam_monitor_enabled else [],
+        "spam_cooldown": max(0, int(spam_cooldown)),
+        "spam_attempt_delete": bool(spam_attempt_delete),
+        "spam_log_path": SPAM_LOG_FILE if (spam_monitor_enabled and spam_log_enabled) else None,
     }
 
 

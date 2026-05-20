@@ -16,7 +16,9 @@ import time
 
 from bot import (launch_bot, init_name_pool, leave_meeting,
                  check_bot_alive, send_chat_message, spam_reactions,
-                 monitor_and_reply)
+                 monitor_and_reply, monitor_chat_spam,
+                 get_participant_count, get_participants)
+from browser import quit_driver
 
 log = logging.getLogger(__name__)
 
@@ -194,13 +196,30 @@ class BotManager:
         reaction_count = cfg.get("reaction_count", 0)
         monitor_target = cfg.get("chat_monitor_target", "")
         monitor_reply = cfg.get("chat_monitor_reply", "")
+        spam_enabled = cfg.get("spam_monitor_enabled", False)
+        spam_threshold = cfg.get("spam_threshold", 10)
+        spam_responses = cfg.get("spam_responses", [])
+        spam_cooldown = cfg.get("spam_cooldown", 90)
+        spam_attempt_delete = cfg.get("spam_attempt_delete", False)
+        spam_log_path = cfg.get("spam_log_path")
 
         # Track last-seen message count per bot for chat monitoring
         chat_last_seen = {}
+        # Spam monitor uses one shared state dict for the meeting; only the
+        # responder bot reads chat and fires replies, so per-bot state isn't
+        # needed and would just produce duplicate moderation actions.
+        spam_state = {}
+        spam_last_seen = 0
 
         log.info("── Persistence mode active (interval: %ds) ──", interval)
         if monitor_target:
             log.info("── Chat monitor: watching '%s' ──", monitor_target)
+        if spam_enabled and spam_responses:
+            log.info("── Spam monitor active (threshold: %d, %d replies loaded) ──",
+                     spam_threshold, len(spam_responses))
+        elif spam_enabled and not spam_responses:
+            log.warning("── Spam monitor enabled but no replies loaded — disabling. ──")
+            spam_enabled = False
         last_chat = time.monotonic()
         last_reaction = time.monotonic()
 
@@ -211,6 +230,19 @@ class BotManager:
 
             now = time.monotonic()
             dead_bots = []
+
+            # Only the lowest-id active bot is the spam responder, so a single
+            # spam burst gets one reply instead of one-per-bot.
+            new_responder_id = (
+                min(b for b, _ in self._active_drivers)
+                if self._active_drivers else None
+            )
+            if new_responder_id != spam_state.get("_responder_id"):
+                # Different bot's DOM — its message indices are unrelated
+                spam_last_seen = 0
+                spam_state["_responder_id"] = new_responder_id
+            spam_responder_id = new_responder_id
+            spam_responder_driver = None
 
             for bot_id_1, driver in list(self._active_drivers):
                 bot_id = bot_id_1 - 1
@@ -224,6 +256,16 @@ class BotManager:
                     self._set_status(bot_id, BotStatus.DISCONNECTED)
                     dead_bots.append((bot_id_1, driver))
                     continue
+
+                # Report participant count (lightweight badge read)
+                try:
+                    pcount = get_participant_count(driver)
+                    if pcount > 0:
+                        with self._stats_lock:
+                            self._bot_statuses.setdefault(bot_id, BotStatus.JOINED)
+                        log.debug("Bot %d: %d participants in meeting", bot_id_1, pcount)
+                except Exception:
+                    pass
 
                 # Periodic chat
                 if chat_interval > 0 and chat_msg and (now - last_chat) >= chat_interval:
@@ -250,16 +292,37 @@ class BotManager:
                     except Exception:
                         pass
 
+                # Capture the responder's driver for the spam monitor pass
+                # below — keeps a single shared state for the whole meeting.
+                if bot_id_1 == spam_responder_id:
+                    spam_responder_driver = driver
+
             if chat_interval > 0 and (now - last_chat) >= chat_interval:
                 last_chat = now
             if reaction_interval > 0 and (now - last_reaction) >= reaction_interval:
                 last_reaction = now
 
+            # Single spam-monitor pass per cycle, run on the responder bot only
+            if (spam_enabled and spam_responses
+                    and spam_responder_driver is not None
+                    and spam_responder_id is not None):
+                try:
+                    spam_last_seen = monitor_chat_spam(
+                        spam_responder_driver, spam_responder_id - 1,
+                        spam_state, spam_threshold, spam_responses,
+                        spam_last_seen, send_response=True,
+                        cooldown_seconds=spam_cooldown,
+                        attempt_delete=spam_attempt_delete,
+                        log_path=spam_log_path,
+                    )
+                except Exception as exc:
+                    log.debug("Spam monitor pass errored: %s", exc)
+
             # Clean up dead bots
             for bot_id_1, driver in dead_bots:
                 self._active_drivers.remove((bot_id_1, driver))
                 try:
-                    driver.quit()
+                    quit_driver(driver)
                 except Exception:
                     pass
 
@@ -403,7 +466,7 @@ class BotManager:
                 log.debug("Bot %d: Graceful leave failed, force-quitting.", bot_id)
             finally:
                 try:
-                    driver.quit()
+                    quit_driver(driver)
                 except Exception:
                     pass
 
@@ -433,15 +496,14 @@ class BotManager:
         self._notify_stats()
 
     def _notify_bot(self, bot_id, elapsed):
-        if self.on_bot_update:
-            try:
-                self.on_bot_update(
-                    bot_id,
-                    self._bot_statuses.get(bot_id, BotStatus.PENDING),
-                    elapsed,
-                )
-            except Exception:
-                pass
+        if not self.on_bot_update:
+            return
+        with self._stats_lock:
+            status = self._bot_statuses.get(bot_id, BotStatus.PENDING)
+        try:
+            self.on_bot_update(bot_id, status, elapsed)
+        except Exception:
+            pass
 
     def _notify_stats(self):
         if self.on_stats_update:
@@ -464,6 +526,6 @@ class BotManager:
     def _emergency_cleanup(self):
         for _, driver in self._active_drivers:
             try:
-                driver.quit()
+                quit_driver(driver)
             except Exception:
                 pass

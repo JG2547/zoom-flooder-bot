@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import datetime
+import json
 import logging
 import os
 import random
@@ -17,7 +19,7 @@ from selenium.common.exceptions import (
     NoSuchFrameException,
 )
 
-from browser import create_driver
+from browser import create_driver, quit_driver
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,13 @@ MAX_ATTEMPTS = 3
 INPUT_SETTLE_DELAY = 0.25
 POST_JOIN_DELAY = 1.0
 JOIN_URL = "https://zoom.us/wc/join/{meeting_id}"
+
+# ── Human-like timing constants ────────────────────────────────────────────
+HUMAN_CHAR_DELAY = (0.04, 0.12)    # per-character typing delay range (seconds)
+HUMAN_CLICK_PAUSE = (0.3, 0.8)     # pause before clicking after moving mouse
+HUMAN_MOVE_DURATION = (0.4, 1.0)   # mouse travel time range
+HUMAN_THINK_DELAY = (0.8, 2.5)     # "thinking" pause between major actions
+PAGE_SETTLE_DELAY = (1.5, 3.5)     # wait for page to visually settle
 
 # Selectors Zoom has used across different versions of the web client
 # Updated March 2026 — Zoom 7.0 web client + legacy fallbacks
@@ -118,6 +127,119 @@ def _safe_type(driver, element, text):
         """,
         element, text,
     )
+
+
+# ── Human-like interaction helpers ─────────────────────────────────────────
+
+def _human_delay(lo=0.5, hi=1.5):
+    """Sleep a random duration to simulate human reaction time."""
+    time.sleep(random.uniform(lo, hi))
+
+
+def _human_type(driver, element, text):
+    """Type text character-by-character with realistic per-key delays.
+
+    Falls back to _safe_type for non-BMP characters (emojis).
+    """
+    # Check if text has non-BMP characters that need JS fallback
+    has_non_bmp = any(ord(c) > 0xFFFF for c in text)
+    if has_non_bmp:
+        # Use JS setter but still simulate focus + click first
+        _human_move_and_click(driver, element)
+        _human_delay(0.2, 0.5)
+        _safe_type(driver, element, text)
+        return
+
+    _human_move_and_click(driver, element)
+    _human_delay(0.2, 0.5)
+
+    # Clear field first
+    element.clear()
+    _human_delay(0.1, 0.3)
+
+    for char in text:
+        element.send_keys(char)
+        time.sleep(random.uniform(*HUMAN_CHAR_DELAY))
+        # Occasional longer pause (simulates hesitation)
+        if random.random() < 0.08:
+            time.sleep(random.uniform(0.2, 0.5))
+
+
+def _human_move_and_click(driver, element):
+    """Move mouse to element with a natural curve, pause, then click.
+
+    Uses ActionChains to produce visible mouse movement instead of
+    teleporting via JS click.
+    """
+    try:
+        # Scroll element into view first
+        driver.execute_script(
+            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+            element,
+        )
+        _human_delay(0.3, 0.7)
+
+        # Move to element with slight random offset so it's not dead-center
+        offset_x = random.randint(-3, 3)
+        offset_y = random.randint(-3, 3)
+        actions = ActionChains(driver)
+        actions.move_to_element_with_offset(element, offset_x, offset_y)
+        actions.pause(random.uniform(*HUMAN_CLICK_PAUSE))
+        actions.click()
+        actions.perform()
+    except Exception:
+        # Fallback: JS click if ActionChains fails (e.g. element not interactable)
+        try:
+            driver.execute_script("arguments[0].click();", element)
+        except Exception:
+            pass
+
+
+def _human_page_wait(driver, lo=None, hi=None):
+    """Wait a randomized duration simulating human page-load perception.
+
+    Also waits for document.readyState to be complete so the delay
+    includes actual rendering time.
+    """
+    lo = lo or PAGE_SETTLE_DELAY[0]
+    hi = hi or PAGE_SETTLE_DELAY[1]
+    # Wait for actual page readiness first
+    try:
+        WebDriverWait(driver, 6).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+    except Exception:
+        pass
+    # Then add human-like perception delay
+    time.sleep(random.uniform(lo, hi))
+
+
+def _wipe_browser_data(driver):
+    """Clear all browser data — cookies, localStorage, sessionStorage, cache.
+
+    Called before navigating to the join page and after leaving/quitting.
+    """
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+    try:
+        driver.execute_script("""
+            try { window.localStorage.clear(); } catch(e) {}
+            try { window.sessionStorage.clear(); } catch(e) {}
+        """)
+    except Exception:
+        pass
+    # Clear application cache / service workers via CDP if available
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+    except Exception:
+        pass
+    try:
+        driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+    except Exception:
+        pass
+    log.debug("Browser data wiped.")
 
 
 # ── Error detection XPaths / selectors ──────────────────────────────────────
@@ -604,9 +726,9 @@ def _dismiss_gates(driver, bot_id):
         for btn in elems:
             try:
                 if btn.is_displayed():
-                    btn.click()
+                    _human_move_and_click(driver, btn)
                     log.info("Bot %d: Accepted cookies.", bot_id + 1)
-                    time.sleep(0.5)
+                    _human_delay(0.5, 1.2)
                     break
             except Exception:
                 continue
@@ -614,12 +736,13 @@ def _dismiss_gates(driver, bot_id):
             continue
         break
 
-    # 2. Accept Zoom disclaimer / terms of service (use JS click — may be behind overlay)
+    # 2. Accept Zoom disclaimer / terms of service
     try:
         btn = driver.find_element(By.ID, "disclaimer_agree")
-        driver.execute_script("arguments[0].click();", btn)
+        _human_delay(0.5, 1.0)
+        _human_move_and_click(driver, btn)
         log.info("Bot %d: Accepted disclaimer.", bot_id + 1)
-        time.sleep(1)
+        _human_delay(0.8, 1.5)
     except Exception:
         # Fallback: try text-based selectors
         for by, sel in [
@@ -630,9 +753,10 @@ def _dismiss_gates(driver, bot_id):
             elems = driver.find_elements(by, sel)
             if elems:
                 try:
-                    driver.execute_script("arguments[0].click();", elems[0])
+                    _human_delay(0.5, 1.0)
+                    _human_move_and_click(driver, elems[0])
                     log.info("Bot %d: Accepted disclaimer (fallback).", bot_id + 1)
-                    time.sleep(1)
+                    _human_delay(0.8, 1.5)
                     break
                 except Exception:
                     continue
@@ -649,9 +773,9 @@ def _dismiss_gates(driver, bot_id):
         for btn in elems:
             try:
                 if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
+                    _human_move_and_click(driver, btn)
                     log.info("Bot %d: Clicked continue/audio.", bot_id + 1)
-                    time.sleep(0.5)
+                    _human_delay(0.5, 1.2)
                     break
             except Exception:
                 continue
@@ -669,9 +793,9 @@ def _dismiss_gates(driver, bot_id):
         for btn in elems:
             try:
                 if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
+                    _human_move_and_click(driver, btn)
                     log.info("Bot %d: Dismissed recording notice.", bot_id + 1)
-                    time.sleep(0.5)
+                    _human_delay(0.5, 1.0)
                     break
             except Exception:
                 continue
@@ -719,33 +843,31 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 continue
             wait = WebDriverWait(driver, ELEMENT_WAIT_TIMEOUT)
 
+            # ── Wipe browser data before loading anything ──────────────
+            _wipe_browser_data(driver)
+
             driver.get(JOIN_URL.format(meeting_id=meeting_id))
 
             bot_name = custom_name or _pick_unique_name()
 
-            # Wait for page to load — use WebDriverWait instead of fixed sleep
+            # Wait for page to load with human-like timing
             if _stopped():
-                driver.quit(); driver = None
+                quit_driver(driver); driver = None
                 return (None, time.monotonic() - t_start)
-            try:
-                WebDriverWait(driver, 8).until(
-                    lambda d: d.execute_script("return document.readyState") == "complete"
-                )
-            except TimeoutException:
-                pass  # proceed anyway — SPA may still be loading components
+            _human_page_wait(driver, 2.0, 4.0)
 
             # ── Dismiss pre-join gates (cookies, disclaimer, etc.) ──────
             driver.switch_to.default_content()
             _dismiss_gates(driver, bot_id)
 
             # Wait for the web client to load after dismissing gates
-            # Poll for form with short waits (SPA may need time to render)
+            # Poll for form with human-like waits (SPA may need time to render)
             form_found = False
             for wait_step in range(8):
                 if _stopped():
-                    driver.quit(); driver = None
+                    quit_driver(driver); driver = None
                     return (None, time.monotonic() - t_start)
-                time.sleep(1.5)
+                _human_delay(1.2, 2.5)
                 driver.switch_to.default_content()
                 if _switch_to_zoom_content(driver, bot_id):
                     form_found = True
@@ -756,7 +878,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 if _check_captcha(driver):
                     log.warning("Bot %d: Captcha/challenge detected before join form!", bot_id + 1)
                     _take_screenshot(driver, bot_id, "captcha_detected")
-                    driver.quit(); driver = None
+                    quit_driver(driver); driver = None
                     elapsed = time.monotonic() - t_start
                     return ("captcha", elapsed)
                 # Dump diagnostics on first failure only
@@ -764,7 +886,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                     _debug_dump(driver, bot_id)
                 else:
                     log.info("Bot %d: Form not visible, retrying…", bot_id + 1)
-                driver.quit()
+                quit_driver(driver)
                 driver = None
                 time.sleep(3)
                 continue
@@ -775,21 +897,23 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 name_el = _find_element_js(driver, 'name')
             if not name_el:
                 log.warning("Bot %d: Name field missing.", bot_id + 1)
-                driver.quit()
+                quit_driver(driver)
                 driver = None
                 time.sleep(2)
                 continue
 
-            # Fill name using JS to support emojis / non-BMP characters
-            _safe_type(driver, name_el, bot_name)
-            time.sleep(INPUT_SETTLE_DELAY)
+            # Fill name with human-like typing (character by character)
+            _human_delay(*HUMAN_THINK_DELAY)  # pause like reading the form
+            _human_type(driver, name_el, bot_name)
+            _human_delay(0.3, 0.8)
             log.info("Bot %d: Filled name '%s'.", bot_id + 1, bot_name)
 
             # Check if passcode field is on the same page (old-style single-step)
             pwd_el = _find_element_multi(driver, _PWD_SELECTORS) or _find_element_js(driver, 'password')
             if pwd_el and passcode:
-                _safe_type(driver, pwd_el, passcode)
-                time.sleep(INPUT_SETTLE_DELAY)
+                _human_delay(0.5, 1.2)  # pause before next field
+                _human_type(driver, pwd_el, passcode)
+                _human_delay(0.3, 0.8)
                 log.info("Bot %d: Filled passcode (single-step).", bot_id + 1)
 
             # ── Staged join: wait for deploy signal before clicking Join ──
@@ -800,7 +924,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 # Block until deploy() is called (or stop signal)
                 while not stage_event.is_set():
                     if _stopped():
-                        driver.quit(); driver = None
+                        quit_driver(driver); driver = None
                         return (None, time.monotonic() - t_start)
                     stage_event.wait(timeout=0.5)
                 log.info("Bot %d: Deploy signal received — joining!", bot_id + 1)
@@ -810,7 +934,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
 
             # ── Step 2: Handle passcode on second page (if needed) ──
             if not pwd_el and passcode:
-                time.sleep(2)
+                _human_page_wait(driver, 2.0, 3.5)
                 # Re-check frames after page transition
                 driver.switch_to.default_content()
                 _switch_to_zoom_content(driver, bot_id)
@@ -820,24 +944,25 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                     pwd_el = _find_element_multi(driver, _PWD_SELECTORS) or _find_element_js(driver, 'password')
                     if pwd_el:
                         break
-                    time.sleep(1.5)
+                    _human_delay(1.2, 2.5)
 
                 if pwd_el and passcode:
-                    _safe_type(driver, pwd_el, passcode)
-                    time.sleep(INPUT_SETTLE_DELAY)
+                    _human_delay(*HUMAN_THINK_DELAY)
+                    _human_type(driver, pwd_el, passcode)
+                    _human_delay(0.3, 0.8)
                     log.info("Bot %d: Filled passcode (step 2).", bot_id + 1)
                     # Click Join again for passcode submission
                     _click_join(driver, bot_id, bot_name, passcode)
                 else:
                     log.info("Bot %d: No passcode requested, continuing…", bot_id + 1)
 
-            time.sleep(POST_JOIN_DELAY)
+            _human_page_wait(driver, 1.5, 3.0)
 
             # ── Verify join actually succeeded ──────────────────────────
             error_msg = _check_join_errors(driver)
             if error_msg:
                 log.warning("Bot %d: Zoom error after join: %s", bot_id + 1, error_msg)
-                driver.quit()
+                quit_driver(driver)
                 driver = None
                 elapsed = time.monotonic() - t_start
                 return (None, elapsed)
@@ -846,7 +971,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
             if _check_captcha(driver):
                 log.warning("Bot %d: Captcha/challenge detected! Cannot proceed.", bot_id + 1)
                 _take_screenshot(driver, bot_id, "captcha_detected")
-                driver.quit()
+                quit_driver(driver)
                 driver = None
                 elapsed = time.monotonic() - t_start
                 return ("captcha", elapsed)
@@ -861,7 +986,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 wr_polls = max(1, waiting_room_timeout // 2)
                 for _ in range(wr_polls):
                     if _stopped():
-                        driver.quit(); driver = None
+                        quit_driver(driver); driver = None
                         return (None, time.monotonic() - t_start)
                     time.sleep(2)
                     if not _find_element_multi(driver, _WAITING_ROOM_SELECTORS):
@@ -908,7 +1033,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 leave_meeting(driver, bot_id + 1)
                 time.sleep(1)
                 try:
-                    driver.quit()
+                    quit_driver(driver)
                 except Exception:
                     pass
                 return ("left", elapsed)  # Signal: succeeded + already left
@@ -929,7 +1054,7 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
 
             if driver:
                 try:
-                    driver.quit()
+                    quit_driver(driver)
                 except Exception:
                     pass
                 driver = None
@@ -1043,8 +1168,8 @@ def _select_chat_recipient(driver, bot_id, recipient_name):
 
         log.info("Bot %d: Clicking recipient dropdown: '%s'",
                  bot_id + 1, receiver_btn.get_attribute("aria-label") or receiver_btn.text or "(no label)")
-        driver.execute_script("arguments[0].click();", receiver_btn)
-        time.sleep(1.5)
+        _human_move_and_click(driver, receiver_btn)
+        _human_delay(1.0, 2.0)
         _take_screenshot(driver, bot_id, "dropdown_opened")
 
         recipient_lower = recipient_name.lower().strip()
@@ -1316,9 +1441,9 @@ def send_chat_message(driver, bot_id, message, recipient=""):
 
         chat_opened = False
         if chat_btn:
-            driver.execute_script("arguments[0].click();", chat_btn)
+            _human_move_and_click(driver, chat_btn)
             log.info("Bot %d: Opened chat panel.", bot_id + 1)
-            time.sleep(1.5)
+            _human_delay(1.0, 2.0)
             chat_opened = True
         else:
             # Keyboard shortcut fallback — Alt+H toggles chat in Zoom web client
@@ -1433,11 +1558,11 @@ def send_chat_message(driver, bot_id, message, recipient=""):
             _take_screenshot(driver, bot_id, "chat_input_not_found")
             return False
 
-        # Step 3: Type the message (use JS for emoji/non-BMP support)
-        chat_input.click()
-        time.sleep(0.3)
-        _safe_type(driver, chat_input, message)
-        time.sleep(0.3)
+        # Step 3: Type the message with human-like input
+        _human_move_and_click(driver, chat_input)
+        _human_delay(0.3, 0.6)
+        _human_type(driver, chat_input, message)
+        _human_delay(0.3, 0.8)
 
         # Step 4: Send — try Enter key first, then send button
         chat_input.send_keys(Keys.RETURN)
@@ -1554,6 +1679,245 @@ def monitor_and_reply(driver, bot_id, target_user, reply_template, last_seen_cou
     return len(messages)
 
 
+def _delete_zoom_chat_message(driver, target_text):
+    """Best-effort deletion of every chat message whose text matches ``target_text``.
+
+    Only the meeting host/co-host can delete others' messages in Zoom's web client,
+    so this will silently fail for normal participants. Returns the number of
+    messages successfully deleted.
+    """
+    deleted = 0
+    try:
+        # Find all matching message containers via JS, store on window for later access.
+        count = driver.execute_script("""
+            var target = arguments[0];
+            var containers = document.querySelectorAll(
+                '[class*="chat-message"], [data-testid*="chat-message"], '
+                + '[class*="ChatMessage"], [class*="chat-item"], '
+                + '[role="listitem"], [class*="message-item"]'
+            );
+            var matches = [];
+            containers.forEach(function(c) {
+                var textEl = c.querySelector(
+                    '[class*="content"], [class*="Content"], [class*="text-message"], '
+                    + '[class*="message-body"], [class*="msg-text"], [class*="ChatText"]'
+                );
+                var text = (textEl ? textEl.textContent : c.textContent || "").trim();
+                // Strip leading sender name if present
+                var senderEl = c.querySelector(
+                    '[class*="sender"], [class*="Sender"], [class*="author"], '
+                    + '[class*="user-name"], [class*="display-name"]'
+                );
+                if (senderEl) {
+                    var sn = senderEl.textContent.trim();
+                    if (sn && text.startsWith(sn)) text = text.substring(sn.length).trim();
+                }
+                if (text === target) matches.push(c);
+            });
+            window.__spamMatches = matches;
+            return matches.length;
+        """, target_text)
+
+        if not count:
+            return 0
+
+        for idx in range(count):
+            try:
+                # Hover over the message to reveal the more-options button.
+                el = driver.execute_script(
+                    "return window.__spamMatches && window.__spamMatches[arguments[0]];", idx
+                )
+                if not el:
+                    continue
+                ActionChains(driver).move_to_element(el).perform()
+                time.sleep(0.15)
+
+                # Click the "more options" / ellipsis button on the message.
+                clicked = driver.execute_script("""
+                    var el = arguments[0];
+                    var btn = el.querySelector(
+                        'button[aria-label*="more" i], button[aria-label*="option" i], '
+                        + 'button[aria-label*="action" i], [class*="more-button"], '
+                        + '[class*="ellipsis"], [class*="MoreOption"]'
+                    );
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                """, el)
+                if not clicked:
+                    continue
+                time.sleep(0.2)
+
+                # Click the "Delete" item in the menu.
+                deleted_one = driver.execute_script("""
+                    var items = document.querySelectorAll(
+                        '[role="menuitem"], [class*="menu-item"], [class*="MenuItem"], li button'
+                    );
+                    for (var i = 0; i < items.length; i++) {
+                        var t = (items[i].textContent || "").trim().toLowerCase();
+                        if (t === "delete" || t === "delete message" || t.indexOf("delete") === 0) {
+                            items[i].click();
+                            return true;
+                        }
+                    }
+                    return false;
+                """)
+                if not deleted_one:
+                    continue
+                time.sleep(0.2)
+
+                # Confirm in any modal that appears.
+                driver.execute_script("""
+                    var btns = document.querySelectorAll('button');
+                    for (var i = 0; i < btns.length; i++) {
+                        var t = (btns[i].textContent || "").trim().toLowerCase();
+                        if (t === "delete" || t === "confirm" || t === "ok" || t === "yes") {
+                            btns[i].click();
+                            return;
+                        }
+                    }
+                """)
+                time.sleep(0.15)
+                deleted += 1
+            except Exception:
+                continue
+
+        # Cleanup
+        try:
+            driver.execute_script("delete window.__spamMatches;")
+        except Exception:
+            pass
+    except Exception as exc:
+        log.debug("Delete-message JS failed: %s", exc)
+
+    return deleted
+
+
+def _append_spam_log(log_path, entry):
+    """Append a single JSON-line entry to the spam audit log."""
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        log.debug("Spam log write failed (%s): %s", log_path, exc)
+
+
+def monitor_chat_spam(driver, bot_id, state, threshold, responses,
+                      last_seen_count=0, send_response=True,
+                      cooldown_seconds=90, attempt_delete=False,
+                      log_path=None):
+    """Watch chat for repeated identical messages and moderate them.
+
+    Counts consecutive identical messages (exact match). When the run exceeds
+    ``threshold`` and no cooldown is active, fires one random reply from
+    ``responses``, optionally tries to delete the offending messages, tracks
+    the sender as a repeat offender, and appends a JSON-line audit entry.
+
+    A different message text resets the consecutive-run, so a later burst of
+    the same text can trigger again once the cooldown clears.
+
+    Args:
+        driver: Selenium WebDriver.
+        bot_id: Bot index (0-based).
+        state: Mutable dict carried across calls (single shared instance for
+            the meeting). Pass an empty dict on the first call.
+        threshold: Run length above which a burst is treated as spam.
+        responses: Non-empty list of reply strings to choose from.
+        last_seen_count: Number of messages already processed.
+        send_response: When False, update state but don't send/delete/log
+            (use this for non-responder bots that share state).
+        cooldown_seconds: Suppress further responses for this many seconds
+            after firing. 0 disables.
+        attempt_delete: If True, try the host-only delete UI on each spam
+            message. Silently no-ops for non-host bots.
+        log_path: Optional path to a JSON-lines audit log.
+
+    Returns:
+        Updated ``last_seen_count``.
+    """
+    if not responses or threshold <= 0:
+        return last_seen_count
+
+    messages = read_chat_messages(driver, bot_id)
+    if not messages:
+        return last_seen_count
+
+    new_messages = messages[last_seen_count:]
+    own_responses = state.setdefault("own_responses", set())
+    offenders = state.setdefault("offenders", {})
+    now = time.monotonic()
+    cooldown_until = state.get("cooldown_until", 0.0)
+
+    for msg in new_messages:
+        text = (msg.get("text") or "").strip()
+        sender = (msg.get("sender") or "").strip()
+        if not text:
+            continue
+
+        # Ignore our own replies so they don't reset the spammer's run.
+        if text in own_responses:
+            own_responses.discard(text)
+            continue
+
+        if text == state.get("last_text"):
+            state["count"] = state.get("count", 0) + 1
+        else:
+            state["last_text"] = text
+            state["last_sender"] = sender
+            state["count"] = 1
+            state["responded"] = False
+
+        if (state["count"] > threshold
+                and not state.get("responded")
+                and now >= cooldown_until):
+            state["responded"] = True
+            if not send_response:
+                continue
+
+            reply = random.choice(responses)
+            burst_count = state["count"]
+            burst_sender = state.get("last_sender", "") or sender
+            offenders[burst_sender] = offenders.get(burst_sender, 0) + 1
+            offense_total = offenders[burst_sender]
+
+            log.info(
+                "Bot %d: Spam detected from '%s' (%dx '%s', strike #%d) — replying: %s",
+                bot_id + 1, burst_sender or "?", burst_count, text[:40],
+                offense_total, reply[:60],
+            )
+            try:
+                send_chat_message(driver, bot_id, reply)
+                own_responses.add(reply)
+            except Exception as exc:
+                log.warning("Bot %d: Spam reply failed: %s", bot_id + 1, exc)
+
+            deleted = 0
+            if attempt_delete:
+                try:
+                    deleted = _delete_zoom_chat_message(driver, text)
+                    if deleted:
+                        log.info("Bot %d: Deleted %d spam message(s).", bot_id + 1, deleted)
+                except Exception as exc:
+                    log.debug("Bot %d: Delete attempt errored: %s", bot_id + 1, exc)
+
+            _append_spam_log(log_path, {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "sender": burst_sender,
+                "text": text,
+                "count": burst_count,
+                "strike": offense_total,
+                "response": reply,
+                "deleted": deleted,
+                "delete_attempted": bool(attempt_delete),
+            })
+
+            if cooldown_seconds > 0:
+                state["cooldown_until"] = now + float(cooldown_seconds)
+
+    return len(messages)
+
+
 # ── Leave-meeting selectors ────────────────────────────────────────────────
 _LEAVE_BTN_SELECTORS = [
     (By.CSS_SELECTOR, "button[aria-label*='leave meeting' i]"),
@@ -1590,7 +1954,7 @@ def leave_meeting(driver, bot_id):
     """Gracefully leave a Zoom meeting by clicking the Leave button.
 
     Returns True if the leave action was performed, False otherwise.
-    The caller should still call driver.quit() after this.
+    The caller should still call quit_driver(driver) after this.
     """
     try:
         driver.switch_to.default_content()
@@ -1626,9 +1990,9 @@ def leave_meeting(driver, bot_id):
             _take_screenshot(driver, bot_id - 1, "leave_btn_not_found")
             return False
 
-        driver.execute_script("arguments[0].click();", leave_btn)
+        _human_move_and_click(driver, leave_btn)
         log.info("Bot %d: Clicked leave button.", bot_id)
-        time.sleep(1.5)
+        _human_delay(1.0, 2.0)
 
         # Step 2: Click "Leave Meeting" on the confirmation dialog
         confirm_btn = _find_element_multi(driver, _LEAVE_CONFIRM_SELECTORS)
@@ -1650,11 +2014,14 @@ def leave_meeting(driver, bot_id):
                 pass
 
         if confirm_btn:
-            driver.execute_script("arguments[0].click();", confirm_btn)
+            _human_move_and_click(driver, confirm_btn)
             log.info("Bot %d: Confirmed leave meeting.", bot_id)
-            time.sleep(1)
+            _human_delay(0.8, 1.5)
         else:
             log.debug("Bot %d: No leave confirmation dialog, leave may have completed directly.", bot_id)
+
+        # Wipe browser data after leaving
+        _wipe_browser_data(driver)
 
         return True
 
@@ -1713,8 +2080,8 @@ def send_reaction(driver, bot_id, reaction_type="clap"):
             log.debug("Bot %d: Reactions button not found.", bot_id + 1)
             return False
 
-        driver.execute_script("arguments[0].click();", react_btn)
-        time.sleep(0.8)
+        _human_move_and_click(driver, react_btn)
+        _human_delay(0.6, 1.2)
 
         # Find the specific reaction emoji in the popup/panel
         keywords = _REACTION_MAP.get(reaction_type, [reaction_type])
@@ -1739,9 +2106,9 @@ def send_reaction(driver, bot_id, reaction_type="clap"):
         """, keywords)
 
         if emoji_btn:
-            driver.execute_script("arguments[0].click();", emoji_btn)
+            _human_move_and_click(driver, emoji_btn)
             log.info("Bot %d: Sent %s reaction.", bot_id + 1, reaction_type)
-            time.sleep(0.3)
+            _human_delay(0.2, 0.5)
             return True
         else:
             # Fallback: click the first visible emoji-like button in any reaction panel
@@ -1758,7 +2125,7 @@ def send_reaction(driver, bot_id, reaction_type="clap"):
                 return null;
             """)
             if fallback:
-                driver.execute_script("arguments[0].click();", fallback)
+                _human_move_and_click(driver, fallback)
                 log.info("Bot %d: Sent reaction (fallback).", bot_id + 1)
                 return True
             log.debug("Bot %d: Could not find %s emoji in reaction panel.", bot_id + 1, reaction_type)
@@ -1784,6 +2151,194 @@ def spam_reactions(driver, bot_id, reactions, count, delay=1.0):
         if i < count - 1:
             time.sleep(delay)
     log.info("Bot %d: Finished reaction spam.", bot_id + 1)
+
+
+# ── Participant scanning & meeting state ──────────────────────────────────
+
+# TODO(fiber-only, Phase 3): derive count from get_participants() fiber result
+# instead of scraping the toolbar badge. Toolbar DOM drifts with each Zoom
+# class-name churn; the fiber list is authoritative. See
+# docs/DETECTION_ARCHITECTURE.md §6.
+
+def get_participant_count(driver):
+    """Read participant count from the toolbar badge (authoritative count)."""
+    try:
+        return driver.execute_script("""
+            var allBtns = document.querySelectorAll('button, [role="button"]');
+            for (var j = 0; j < allBtns.length; j++) {
+                var btn = allBtns[j];
+                var txt = btn.textContent || '';
+                var aria = btn.getAttribute('aria-label') || '';
+                if (!/participant/i.test(txt + aria)) continue;
+                var m = txt.trim().match(/^(\\d+)/);
+                if (m) return parseInt(m[1], 10);
+                var m2 = (txt + ' ' + aria).match(/\\((\\d+)\\)/);
+                if (m2) return parseInt(m2[1], 10);
+                var badge = btn.querySelector('[class*="badge"], [class*="number"], .footer-button-base__number');
+                if (badge && /^\\d+$/.test(badge.textContent.trim())) return parseInt(badge.textContent.trim(), 10);
+            }
+            var headers = document.querySelectorAll('[class*="participants-header"], .participants-section-container [class*="title"]');
+            for (var i = 0; i < headers.length; i++) {
+                var m3 = (headers[i].textContent || '').match(/\\((\\d+)\\)/);
+                if (m3) return parseInt(m3[1], 10);
+            }
+            return 0;
+        """) or 0
+    except Exception:
+        return 0
+
+
+# TODO(fiber-only, Phase 2/3): the fiber walker below is Path A only (walk up
+# from a single anchor) with depth 50 and NO time deadline. Replace with the
+# ZMT 3-path walker (zoom_auto_kick.py:3092-3370 — paths A/B/C plus 40-100 ms
+# hard deadline) and switch the return type to FiberResult so callers can
+# distinguish OK([]) from EMPTY / DEADLINE_EXCEEDED. The DOM aria-label
+# fallback (~ line 2284 below) becomes unreachable once DETECTION_MODE is
+# "fiber_only". See docs/DETECTION_ARCHITECTURE.md §2-3.
+
+def get_participants(driver, bot_id):
+    """Get full participant list with video/audio/hand status via React fiber + DOM fallback.
+
+    Returns list of dicts: [{name, role, videoOff, audioMuted, handRaised, isSelf}, ...]
+    """
+    try:
+        # Strategy 1: React fiber extraction (instant, gets ALL participants)
+        fiber_result = driver.execute_script("""
+            var containers = document.querySelectorAll(
+                '[class*="participants-ul"], [class*="virtuoso"], [role="list"], .participants-section-container'
+            );
+            var targetEl = null;
+            for (var i = 0; i < containers.length; i++) {
+                if (containers[i].children.length > 0) { targetEl = containers[i]; break; }
+            }
+            if (!targetEl) return null;
+
+            var fiberKey = Object.keys(targetEl).find(function(k) {
+                return k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0;
+            });
+            if (!fiberKey) return null;
+
+            function isParticipantObj(obj) {
+                if (!obj || typeof obj !== 'object' || obj.$$typeof) return false;
+                var keys = Object.keys(obj);
+                if (keys.length < 3) return false;
+                return keys.some(function(k) { return typeof obj[k] === 'string' && obj[k].length > 1 && obj[k].length < 100; });
+            }
+
+            function extractParticipant(obj) {
+                var keys = Object.keys(obj);
+                var name = '';
+                for (var i = 0; i < keys.length; i++) {
+                    if (typeof obj[keys[i]] === 'string') {
+                        if (/^(displayName|userName|name|display_name|user_name|screenName)$/i.test(keys[i])) {
+                            name = obj[keys[i]]; break;
+                        }
+                    }
+                }
+                if (!name) {
+                    for (var j = 0; j < keys.length; j++) {
+                        if (typeof obj[keys[j]] === 'string' && obj[keys[j]].length > 1 && obj[keys[j]].length < 80
+                            && !/^(http|\\/|#|rgb)/.test(obj[keys[j]])) {
+                            if (obj[keys[j]].length > name.length) name = obj[keys[j]];
+                        }
+                    }
+                }
+                var role = 'participant', isSelf = false, isVideoOn = null, isAudioMuted = null, handRaised = false;
+                for (var k = 0; k < keys.length; k++) {
+                    var kl = keys[k].toLowerCase();
+                    if ((kl.indexOf('host') !== -1 && kl.indexOf('co') === -1) && obj[keys[k]] === true) role = 'host';
+                    if ((kl.indexOf('cohost') !== -1 || kl.indexOf('co_host') !== -1) && obj[keys[k]] === true) role = 'cohost';
+                    if (kl === 'role' && obj[keys[k]] === 1) role = 'host';
+                    if (kl === 'role' && obj[keys[k]] === 2) role = 'cohost';
+                    if (/^(isMe|bMe|isSelf|isMyself)$/i.test(keys[k]) && obj[keys[k]] === true) isSelf = true;
+                    if (/^(bVideoOn|isVideoOn|videoOn)$/i.test(keys[k])) isVideoOn = !!obj[keys[k]];
+                    if (/^(muted|isAudioMuted|bMuted|audioMuted)$/i.test(keys[k])) isAudioMuted = !!obj[keys[k]];
+                    if (/^(bRaiseHand|handRaised|isRaiseHand|bHand)$/i.test(keys[k])) handRaised = !!obj[keys[k]];
+                }
+                return {
+                    name: name, role: role, isSelf: isSelf,
+                    videoOff: isVideoOn === null ? false : !isVideoOn,
+                    audioMuted: isAudioMuted, handRaised: handRaised,
+                    _source: 'fiber'
+                };
+            }
+
+            var fiber = targetEl[fiberKey];
+            var maxDepth = 50, depth = 0;
+            while (fiber && depth < maxDepth) {
+                var sources = [fiber.memoizedProps];
+                var hookState = fiber.memoizedState;
+                var hookDepth = 0;
+                while (hookState && hookDepth < 20) {
+                    if (hookState.memoizedState) sources.push(hookState.memoizedState);
+                    if (hookState.queue && hookState.queue.lastRenderedState) sources.push(hookState.queue.lastRenderedState);
+                    hookState = hookState.next;
+                    hookDepth++;
+                }
+                for (var s = 0; s < sources.length; s++) {
+                    var src = sources[s];
+                    if (!src || typeof src !== 'object') continue;
+                    var keysToCheck = Array.isArray(src) ? [{val: src}] :
+                        Object.keys(src).map(function(k) { return {val: src[k]}; });
+                    for (var c = 0; c < keysToCheck.length; c++) {
+                        var val = keysToCheck[c].val;
+                        if (!Array.isArray(val) || val.length < 3) continue;
+                        if (val[0] && val[0].$$typeof) continue;
+                        if (!isParticipantObj(val[0])) continue;
+                        var extracted = val.map(extractParticipant).filter(function(p) { return p.name.length > 1; });
+                        if (extracted.length >= 3) return extracted;
+                    }
+                }
+                fiber = fiber.return;
+                depth++;
+            }
+            return null;
+        """)
+
+        if fiber_result and len(fiber_result) >= 3:
+            log.info("Bot %d: Fiber extraction: %d participants (instant)", bot_id + 1, len(fiber_result))
+            return fiber_result
+
+        # Strategy 2: DOM aria-label parsing (requires participants panel open)
+        dom_result = driver.execute_script("""
+            var rows = document.querySelectorAll('.participants-li, [class*="participants-li"]');
+            if (rows.length < 1) return null;
+            var results = [];
+            var seen = {};
+            for (var i = 0; i < rows.length; i++) {
+                var label = rows[i].getAttribute('aria-label') || '';
+                if (!label || seen[label]) continue;
+                seen[label] = true;
+                var parts = label.split(',');
+                var nameRolePart = (parts[0] || '').trim();
+                var role = 'participant';
+                if (/\\(Host\\)/i.test(nameRolePart) && !/Co-host/i.test(nameRolePart)) role = 'host';
+                else if (/\\(Co-host\\)/i.test(nameRolePart)) role = 'cohost';
+                var isSelf = /\\(Me\\)/i.test(label) || /\\(You\\)/i.test(label);
+                var name = nameRolePart
+                    .replace(/\\s*\\(Host\\)/gi, '').replace(/\\s*\\(Co-host\\)/gi, '')
+                    .replace(/\\s*\\(Me\\)/gi, '').replace(/\\s*\\(You\\)/gi, '').trim();
+                var audioStr = (parts[1] || '').trim().toLowerCase();
+                var videoStr = (parts[2] || '').trim().toLowerCase();
+                results.push({
+                    name: name, role: role, isSelf: isSelf,
+                    videoOff: videoStr.indexOf('video off') !== -1 || label.indexOf(',video off') !== -1,
+                    audioMuted: audioStr.indexOf('muted') !== -1 || audioStr.indexOf('no audio') !== -1,
+                    handRaised: /raise\\s*hand/i.test(label),
+                    _source: 'dom'
+                });
+            }
+            return results.length > 0 ? results : null;
+        """)
+
+        if dom_result:
+            log.info("Bot %d: DOM extraction: %d participants", bot_id + 1, len(dom_result))
+            return dom_result
+
+        return []
+    except Exception as exc:
+        log.debug("Bot %d: Failed to get participants: %s", bot_id + 1, exc)
+        return []
 
 
 # ── Bot persistence / health check ────────────────────────────────────────
@@ -1826,7 +2381,7 @@ def check_bot_alive(driver):
 
 
 def _click_join(driver, bot_id, bot_name, passcode):
-    """Locate and click the Zoom join button."""
+    """Locate and click the Zoom join button using human-like mouse movement."""
     join_btn = _find_element_multi(driver, _JOIN_SELECTORS)
 
     if not join_btn:
@@ -1847,10 +2402,12 @@ def _click_join(driver, bot_id, bot_name, passcode):
     if not join_btn:
         raise RuntimeError("Could not find join button")
 
+    # Human-like: move mouse to button, pause, then click
     try:
-        driver.execute_script("arguments[0].click();", join_btn)
+        _human_move_and_click(driver, join_btn)
     except ElementClickInterceptedException:
         log.info("Bot %d: Join click intercepted, retrying…", bot_id + 1)
         if not _verify_input_fields(driver, bot_name, passcode):
             raise RuntimeError("Input fields validation failed")
-        driver.execute_script("arguments[0].click();", join_btn)
+        _human_delay(0.5, 1.0)
+        _human_move_and_click(driver, join_btn)

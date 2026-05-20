@@ -15,6 +15,7 @@ venv/
 
 # Logs
 *.log
+spam_log.jsonl
 
 # Runtime data
 screenshots/
