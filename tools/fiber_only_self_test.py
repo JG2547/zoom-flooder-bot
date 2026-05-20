@@ -382,17 +382,22 @@ def _check_alive_unsupported_safe_reprobe(checks, bot_mod, bot_fiber_mod):
     checks.append(chk)
 
 
-def _check_default_remains_hybrid(checks, config_mod):
+def _check_default_restored(checks, config_mod, expected):
     """After all the checks above ran inside _fiber_only_mode, the
     context manager restores the prior value. Verify that restored value
-    is the on-disk default ('hybrid')."""
-    chk = Check("default_remains_hybrid",
-                "config.DETECTION_MODE restored to 'hybrid' after self-test")
+    matches the on-disk default (Phase 7+: ``fiber_only``).
+
+    ``expected`` is captured before the in-process flip and re-asserted
+    after restoration, so this stays correct whether the operator runs
+    with no env override or with ``DETECTION_MODE=hybrid`` for rollback.
+    """
+    chk = Check("default_restored",
+                "config.DETECTION_MODE restored to its pre-test value")
     try:
         observed = config_mod.DETECTION_MODE
-        chk.record("hybrid", observed, observed == "hybrid")
+        chk.record(expected, observed, observed == expected)
     except Exception as exc:
-        chk.record("hybrid", repr(exc), False, error=str(exc))
+        chk.record(expected, repr(exc), False, error=str(exc))
     checks.append(chk)
 
 
@@ -409,6 +414,10 @@ def run_self_test() -> Tuple[List[Check], bool]:
         c.record("import ok", repr(exc), False, error=traceback.format_exc())
         return [c], False
 
+    # Snapshot the at-rest default BEFORE the in-process flip so we can
+    # assert the context manager restores it cleanly.
+    pre_test_mode = config_mod.DETECTION_MODE
+
     with _fiber_only_mode(config_mod):
         _check_mode_predicate(checks, bot_mod)
         _check_read_chat_ok(checks, bot_mod, bot_fiber_mod)
@@ -422,7 +431,7 @@ def run_self_test() -> Tuple[List[Check], bool]:
         _check_alive_off_zoom(checks, bot_mod, bot_fiber_mod)
         _check_alive_unsupported_safe_reprobe(checks, bot_mod, bot_fiber_mod)
 
-    _check_default_remains_hybrid(checks, config_mod)
+    _check_default_restored(checks, config_mod, pre_test_mode)
     all_passed = all(c.passed for c in checks)
     return checks, all_passed
 

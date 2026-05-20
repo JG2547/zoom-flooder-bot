@@ -66,11 +66,13 @@ class TestSelfTestRunner(unittest.TestCase):
         # Runner must restore DETECTION_MODE on the way out.
         self.assertEqual(config.DETECTION_MODE, prev)
 
-    def test_default_remains_hybrid_after_run(self):
-        # The on-disk default is hybrid; after the runner finishes the
-        # in-memory module-level value should match that default.
+    def test_default_remains_fiber_only_after_run(self):
+        # Phase 7: on-disk default is now "fiber_only". The runner flips
+        # to fiber_only inside _fiber_only_mode and restores on exit. On
+        # a clean shell with no DETECTION_MODE env override, the restored
+        # value matches the on-disk default.
         st.main(["--quiet"])
-        self.assertEqual(config.DETECTION_MODE, "hybrid")
+        self.assertEqual(config.DETECTION_MODE, "fiber_only")
 
     def test_summary_prints_pass_line(self):
         buf = io.StringIO()

@@ -330,12 +330,15 @@ class TestImportSmokeFiberOnly(_DryRunBase):
     def test_predicate_returns_true_in_fiber_only(self):
         self.assertTrue(bot._is_fiber_only_mode())
 
-    def test_default_is_hybrid(self):
-        # Snapshot of the at-rest default — must not have drifted to
-        # fiber_only by accident. The dry-run base class flips this to
-        # fiber_only during the test, so we restore-and-check.
+    def test_default_is_fiber_only(self):
+        # Phase 7 flipped the on-disk default from "hybrid" to
+        # "fiber_only". The dry-run base class explicitly forces
+        # fiber_only for each test, so we verify the predicate via
+        # both branches: forced hybrid → False, forced fiber_only → True.
         config.DETECTION_MODE = "hybrid"
         self.assertFalse(bot._is_fiber_only_mode())
+        config.DETECTION_MODE = "fiber_only"
+        self.assertTrue(bot._is_fiber_only_mode())
 
     def test_web_app_imports_without_binding(self):
         """Import ``web_app`` and verify it exposes the Flask app without
@@ -375,12 +378,56 @@ class TestPhase4Invariants(_DryRunBase):
         self.assertIn("participants-li", src)
         self.assertIn("[class*=\"chat-message\"]", src)
 
-    def test_default_detection_mode_is_hybrid(self):
-        # Read config defaults straight from the file rather than from
-        # the live `config.DETECTION_MODE` (which the base class flips).
+    def test_default_detection_mode_is_fiber_only(self):
+        # Phase 7: on-disk default flipped to "fiber_only". Read the
+        # config source straight from disk rather than the live
+        # `config.DETECTION_MODE` (which the base class flips).
         with open(os.path.join(_ROOT, "config.py"), "r", encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn('"DETECTION_MODE", "hybrid"', src)
+        self.assertIn('"DETECTION_MODE", "fiber_only"', src)
+        # "hybrid" must remain a permitted choice — the env-var override
+        # is the documented rollback path.
+        self.assertIn('"hybrid"', src)
+        self.assertIn('"fiber_only"', src)
+
+    def test_subprocess_default_with_no_env_is_fiber_only(self):
+        """Confirm the on-disk default is honored at module import time
+        when no DETECTION_MODE env var is set. Uses a subprocess with
+        the env scrubbed so the parent shell can't leak into the check."""
+        import subprocess
+        env = {k: v for k, v in os.environ.items() if k != "DETECTION_MODE"}
+        result = subprocess.run(
+            [sys.executable, "-c", "import config; print(config.DETECTION_MODE)"],
+            cwd=_ROOT, env=env, capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "fiber_only")
+
+    def test_subprocess_env_override_to_hybrid_works(self):
+        """Rollback path: setting DETECTION_MODE=hybrid in the env must
+        force the legacy hybrid path even after the Phase 7 default flip."""
+        import subprocess
+        env = dict(os.environ)
+        env["DETECTION_MODE"] = "hybrid"
+        result = subprocess.run(
+            [sys.executable, "-c", "import config; print(config.DETECTION_MODE)"],
+            cwd=_ROOT, env=env, capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "hybrid")
+
+    def test_subprocess_invalid_env_falls_back_to_fiber_only(self):
+        """Unrecognized DETECTION_MODE values must fall back to the new
+        default ('fiber_only'), per the validator block in config.py."""
+        import subprocess
+        env = dict(os.environ)
+        env["DETECTION_MODE"] = "lolnope"
+        result = subprocess.run(
+            [sys.executable, "-c", "import config; print(config.DETECTION_MODE)"],
+            cwd=_ROOT, env=env, capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "fiber_only")
 
 
 if __name__ == "__main__":

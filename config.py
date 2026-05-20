@@ -18,26 +18,31 @@ FALLBACK_NAMES = ["User", "Participant", "Student", "Guest", "Attendee"]
 DEFAULT_SPAM_THRESHOLD = 10
 DEFAULT_SPAM_COOLDOWN = 90
 
-# Detection-architecture flag. Declared here for the upcoming fiber-only
-# migration (see docs/DETECTION_ARCHITECTURE.md). Not yet consumed by any
-# code path — current detection is hybrid fiber-first → DOM fallback in
-# bot.py's get_participants. Phase 2 of the migration will read this from
-# env and gate the legacy DOM paths off when set to "fiber_only".
+# Detection-architecture flag. The on-disk default flipped from "hybrid"
+# to "fiber_only" in Phase 7 of the fiber-only migration (see
+# docs/DETECTION_ARCHITECTURE.md and docs/FIBER_ONLY_DEFAULT_FLIP_PLAN.md).
+# The four detection callers in bot.py (read_chat_messages,
+# get_participant_count, get_participants, check_bot_alive) branch on
+# this value. "hybrid" remains a permitted choice and is the recommended
+# rollback if fiber-only proves unreliable on the current Zoom build —
+# set DETECTION_MODE=hybrid in the shell env to force the legacy path.
 #
 # Allowed values:
-#   "hybrid"      — fiber-first, DOM fallback on miss (current behavior).
 #   "fiber_only"  — fiber-first, return empty on miss (matches the ZMT
 #                   Playwright adapter at Botify-Network
 #                   services/zmt-electron-client/agent/src/enforcement/
-#                   adapters/PlaywrightAdapter.js).
-DETECTION_MODE = os.environ.get("DETECTION_MODE", "hybrid").strip().lower()
+#                   adapters/PlaywrightAdapter.js). New default.
+#   "hybrid"      — fiber-first, DOM fallback on miss. Legacy DOM paths
+#                   in bot.py are still present and remain reachable
+#                   under this mode for rollback.
+DETECTION_MODE = os.environ.get("DETECTION_MODE", "fiber_only").strip().lower()
 _DETECTION_MODES = ("hybrid", "fiber_only")
 if DETECTION_MODE not in _DETECTION_MODES:
     log.warning(
-        "DETECTION_MODE=%r is not one of %s — falling back to 'hybrid'.",
+        "DETECTION_MODE=%r is not one of %s — falling back to 'fiber_only'.",
         DETECTION_MODE, _DETECTION_MODES,
     )
-    DETECTION_MODE = "hybrid"
+    DETECTION_MODE = "fiber_only"
 
 # RAM estimate per Chrome instance in MB
 RAM_PER_BOT_MB = 200
