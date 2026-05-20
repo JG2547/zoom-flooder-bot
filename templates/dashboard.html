@@ -3,277 +3,330 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zoom Bot Control Center</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+    <title>RAID CONSOLE // Zoom Bot Control</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◉</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
+<!-- ── Ambient grain overlay ────────────────────────────────────────── -->
+<div class="grain" aria-hidden="true"></div>
+<div class="scanlines" aria-hidden="true"></div>
+
 <!-- ── Toast container ───────────────────────────────────────────── -->
 <div id="toast-container"></div>
 
-<header>
-    <div class="header-left">
-        <h1><span class="logo-icon">&#9889;</span> Zoom Bot Control Center</h1>
-        <div id="connection-indicator" class="disconnected">Connecting…</div>
+<header class="topbar">
+    <div class="brand">
+        <span class="brand-mark">◉</span>
+        <div class="brand-text">
+            <span class="brand-title">RAID&nbsp;CONSOLE</span>
+            <span class="brand-sub">// zoom · bot orchestration · v1.0</span>
+        </div>
     </div>
-    <span id="session-timer" class="timer hidden">00:00</span>
+    <div class="topbar-meta">
+        <span id="session-timer" class="timer hidden" aria-live="polite">00:00</span>
+        <span id="connection-indicator" class="disconnected" aria-live="polite">Connecting…</span>
+    </div>
 </header>
 
-<!-- ── Active Meeting Hero ───────────────────────────────────────── -->
-<div id="meeting-hero" class="meeting-hero hidden">
-    <div class="meeting-hero-glow"></div>
-    <div class="meeting-hero-content">
-        <div class="meeting-hero-left">
-            <div class="meeting-hero-icon">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M15.05 5A5 5 0 0 1 19 8.95M15.05 1A9 9 0 0 1 23 8.94M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
-                </svg>
+<!-- ── Command Strip (hero + extended metrics) ──────────────────────── -->
+<section class="command-strip">
+    <!-- Active Meeting Hero -->
+    <div id="meeting-hero" class="meeting-hero hidden">
+        <div class="meeting-hero-glow"></div>
+        <div class="meeting-hero-content">
+            <div class="meeting-hero-left">
+                <div class="meeting-hero-icon" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M15.05 5A5 5 0 0 1 19 8.95M15.05 1A9 9 0 0 1 23 8.94M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+                    </svg>
+                </div>
+                <div class="meeting-hero-info">
+                    <span class="meeting-hero-label">// active target</span>
+                    <span class="meeting-hero-id" id="hero-meeting-id">—</span>
+                </div>
             </div>
-            <div class="meeting-hero-info">
-                <span class="meeting-hero-label">Active Meeting</span>
-                <span class="meeting-hero-id" id="hero-meeting-id">—</span>
+            <div class="meeting-hero-right">
+                <div class="meeting-hero-badge" id="hero-status-badge">
+                    <span class="badge-dot"></span>
+                    <span id="hero-status-text">IDLE</span>
+                </div>
+                <div class="meeting-hero-stats">
+                    <div class="hero-stat">
+                        <span class="hero-stat-value" id="hero-bots">0</span>
+                        <span class="hero-stat-label">deployed</span>
+                    </div>
+                    <div class="hero-stat-divider"></div>
+                    <div class="hero-stat">
+                        <span class="hero-stat-value hero-green" id="hero-joined">0</span>
+                        <span class="hero-stat-label">in</span>
+                    </div>
+                    <div class="hero-stat-divider"></div>
+                    <div class="hero-stat">
+                        <span class="hero-stat-value hero-red" id="hero-failed">0</span>
+                        <span class="hero-stat-label">out</span>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="meeting-hero-right">
-            <div class="meeting-hero-badge" id="hero-status-badge">
-                <span class="badge-dot"></span>
-                <span id="hero-status-text">Idle</span>
-            </div>
-            <div class="meeting-hero-stats">
-                <div class="hero-stat">
-                    <span class="hero-stat-value" id="hero-bots">0</span>
-                    <span class="hero-stat-label">Bots</span>
-                </div>
-                <div class="hero-stat-divider"></div>
-                <div class="hero-stat">
-                    <span class="hero-stat-value hero-green" id="hero-joined">0</span>
-                    <span class="hero-stat-label">In</span>
-                </div>
-                <div class="hero-stat-divider"></div>
-                <div class="hero-stat">
-                    <span class="hero-stat-value hero-red" id="hero-failed">0</span>
-                    <span class="hero-stat-label">Out</span>
-                </div>
-            </div>
+        <div class="meeting-hero-progress" id="hero-progress">
+            <div class="meeting-hero-progress-bar" id="hero-progress-bar"></div>
         </div>
     </div>
-    <div class="meeting-hero-progress" id="hero-progress">
-        <div class="meeting-hero-progress-bar" id="hero-progress-bar"></div>
-    </div>
-</div>
 
-<!-- ── Progress bar (legacy, hidden when hero active) ────────────── -->
+    <!-- Extended Telemetry (Live Stats) -->
+    <div class="metric-rail">
+        <div class="metric-cell">
+            <span class="metric-tick">01</span>
+            <span class="metric-value stat-green" id="stat-joined">0</span>
+            <span class="metric-key">JOINED</span>
+        </div>
+        <div class="metric-cell">
+            <span class="metric-tick">02</span>
+            <span class="metric-value stat-red" id="stat-failed">0</span>
+            <span class="metric-key">FAILED</span>
+        </div>
+        <div class="metric-cell">
+            <span class="metric-tick">03</span>
+            <span class="metric-value" id="stat-total">0</span>
+            <span class="metric-key">TOTAL</span>
+        </div>
+        <div class="metric-cell">
+            <span class="metric-tick">04</span>
+            <span class="metric-value stat-blue" id="stat-avg">—</span>
+            <span class="metric-key">AVG</span>
+        </div>
+        <div class="metric-cell">
+            <span class="metric-tick">05</span>
+            <span class="metric-value stat-blue" id="stat-fastest">—</span>
+            <span class="metric-key">FASTEST</span>
+        </div>
+        <div class="metric-cell">
+            <span class="metric-tick">06</span>
+            <span class="metric-value stat-blue" id="stat-slowest">—</span>
+            <span class="metric-key">SLOWEST</span>
+        </div>
+    </div>
+</section>
+
+<!-- Legacy progress bar — hidden, kept for app.js compatibility -->
 <div id="progress-wrap" class="hidden" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
     <div id="progress-bar"></div>
     <span id="progress-text">0%</span>
 </div>
 
-<main>
+<!-- ── Shell: config rail + ops viewport ────────────────────────────── -->
+<div class="shell">
 
-    <!-- ── Configuration ──────────────────────────────────────────────── -->
-    <section id="config-panel" class="panel">
-        <h2>Configuration</h2>
-        <form id="config-form" autocomplete="off">
+    <!-- ── Config Rail (sticky) ───────────────────────────────────── -->
+    <aside class="config-rail">
+        <section id="config-panel" class="panel panel-rail">
+            <div class="panel-head">
+                <span class="panel-tag">[ CFG ]</span>
+                <h2>Configuration</h2>
+            </div>
 
-            <!-- Section: Meeting -->
-            <fieldset class="form-section">
-                <legend>Meeting</legend>
-                <div class="form-grid cols-4">
-                    <div class="form-group span-2">
-                        <label for="meeting-id">Meeting ID</label>
-                        <input type="text" id="meeting-id" placeholder="123 456 7890" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="passcode">Passcode</label>
-                        <input type="text" id="passcode" placeholder="(optional)">
-                    </div>
-                    <div class="form-group">
-                        <label for="waiting-room-timeout">WR Timeout <span class="hint">(sec)</span></label>
-                        <input type="number" id="waiting-room-timeout" min="10" value="60">
-                    </div>
-                </div>
-            </fieldset>
+            <form id="config-form" autocomplete="off">
 
-            <!-- Section: Bots -->
-            <fieldset class="form-section">
-                <legend>Bots</legend>
-                <div class="form-grid cols-4">
-                    <div class="form-group">
-                        <label for="num-bots">Count</label>
-                        <input type="number" id="num-bots" min="1" value="1" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="thread-count">Threads</label>
-                        <input type="number" id="thread-count" min="1" value="1">
-                    </div>
-                    <div class="form-group span-2">
-                        <label for="custom-name">Name <span class="hint">(blank = random)</span></label>
-                        <input type="text" id="custom-name" placeholder="Leave blank for random">
-                    </div>
-                </div>
-            </fieldset>
-
-            <!-- Section: Chat -->
-            <fieldset class="form-section">
-                <legend>Chat</legend>
-                <div class="form-grid cols-4">
-                    <div class="form-group span-2">
-                        <label for="chat-message">Message <span class="hint">(blank = none)</span></label>
-                        <input type="text" id="chat-message" placeholder="Message to send in chat">
-                    </div>
-                    <div class="form-group">
-                        <label for="chat-recipient">Recipient <span class="hint">(blank = Everyone)</span></label>
-                        <input type="text" id="chat-recipient" placeholder="Display name">
-                    </div>
-                    <div class="form-group">
-                        <label for="chat-repeat-count">Repeat <span class="hint">(0 = once)</span></label>
-                        <input type="number" id="chat-repeat-count" min="0" value="0">
-                    </div>
-                    <div class="form-group span-2">
-                        <label for="chat-repeat-delay">Repeat Delay <span class="hint">(seconds between messages)</span></label>
-                        <input type="number" id="chat-repeat-delay" min="0.5" step="0.5" value="2.0">
-                    </div>
-                    <div class="form-group span-2">
-                        <label for="chat-monitor-target">Monitor Target <span class="hint">(watch this user's messages)</span></label>
-                        <input type="text" id="chat-monitor-target" placeholder="Display name to watch">
-                    </div>
-                    <div class="form-group span-2">
-                        <label for="chat-monitor-reply">Auto-Reply <span class="hint">({user} {msg} placeholders)</span></label>
-                        <input type="text" id="chat-monitor-reply" placeholder="Reply template, e.g. @{user} nice point!">
-                    </div>
-                </div>
-            </fieldset>
-
-            <!-- Section: Reactions -->
-            <fieldset class="form-section">
-                <legend>Reactions</legend>
-                <div class="form-grid cols-4">
-                    <div class="form-group span-2">
-                        <label>Emojis</label>
-                        <div class="checkbox-row" id="reaction-checkboxes">
-                            <label><input type="checkbox" value="clap"> Clap</label>
-                            <label><input type="checkbox" value="thumbs_up"> Thumbs Up</label>
-                            <label><input type="checkbox" value="heart"> Heart</label>
-                            <label><input type="checkbox" value="laugh"> Laugh</label>
-                            <label><input type="checkbox" value="wow"> Wow</label>
-                            <label><input type="checkbox" value="tada"> Tada</label>
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>meeting</legend>
+                    <div class="form-grid cols-2">
+                        <div class="form-group span-2">
+                            <label for="meeting-id">Meeting ID</label>
+                            <input type="text" id="meeting-id" placeholder="123 456 7890" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="passcode">Passcode <span class="hint">opt</span></label>
+                            <input type="text" id="passcode" placeholder="optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="waiting-room-timeout">WR Timeout <span class="hint">sec</span></label>
+                            <input type="number" id="waiting-room-timeout" min="10" value="60">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="reaction-count">Count</label>
-                        <input type="number" id="reaction-count" min="0" value="0">
-                    </div>
-                    <div class="form-group">
-                        <label for="reaction-delay">Delay <span class="hint">(sec)</span></label>
-                        <input type="number" id="reaction-delay" min="0.1" step="0.1" value="1.0">
-                    </div>
-                </div>
-            </fieldset>
+                </fieldset>
 
-            <!-- Section: Options (toggles) -->
-            <fieldset class="form-section">
-                <legend>Options</legend>
-                <div class="toggle-grid">
-                    <div class="toggle-item">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="auto-restart">
-                            <span class="toggle-text">Auto Restart</span>
-                        </label>
-                        <div class="toggle-sub">
-                            <label for="restart-delay">Delay</label>
-                            <input type="number" id="restart-delay" min="1" value="5" class="input-mini">
-                            <span class="hint">sec</span>
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>fleet</legend>
+                    <div class="form-grid cols-2">
+                        <div class="form-group">
+                            <label for="num-bots">Count</label>
+                            <input type="number" id="num-bots" min="1" value="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="thread-count">Threads</label>
+                            <input type="number" id="thread-count" min="1" value="1">
+                        </div>
+                        <div class="form-group span-2">
+                            <label for="custom-name">Display Name <span class="hint">blank = random</span></label>
+                            <input type="text" id="custom-name" placeholder="leave blank for random pool">
                         </div>
                     </div>
-                    <div class="toggle-item">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="persist-mode">
-                            <span class="toggle-text">Stay in Meeting</span>
-                        </label>
+                </fieldset>
+
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>chat</legend>
+                    <div class="form-grid cols-2">
+                        <div class="form-group span-2">
+                            <label for="chat-message">Message <span class="hint">blank = none</span></label>
+                            <input type="text" id="chat-message" placeholder="text to broadcast">
+                        </div>
+                        <div class="form-group">
+                            <label for="chat-recipient">Recipient <span class="hint">blank = all</span></label>
+                            <input type="text" id="chat-recipient" placeholder="display name">
+                        </div>
+                        <div class="form-group">
+                            <label for="chat-repeat-count">Repeat <span class="hint">0 = once</span></label>
+                            <input type="number" id="chat-repeat-count" min="0" value="0">
+                        </div>
+                        <div class="form-group span-2">
+                            <label for="chat-repeat-delay">Repeat Delay <span class="hint">seconds</span></label>
+                            <input type="number" id="chat-repeat-delay" min="0.5" step="0.5" value="2.0">
+                        </div>
+                        <div class="form-group span-2">
+                            <label for="chat-monitor-target">Monitor Target <span class="hint">watch this user</span></label>
+                            <input type="text" id="chat-monitor-target" placeholder="display name to watch">
+                        </div>
+                        <div class="form-group span-2">
+                            <label for="chat-monitor-reply">Auto-Reply <span class="hint">{user} {msg}</span></label>
+                            <input type="text" id="chat-monitor-reply" placeholder="reply template">
+                        </div>
                     </div>
-                    <div class="toggle-item">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="use-proxies">
-                            <span class="toggle-text">Proxy Rotation</span>
-                        </label>
+                </fieldset>
+
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>spam shield</legend>
+                    <div class="form-grid cols-2">
+                        <div class="form-group span-2">
+                            <label class="check-line"><input type="checkbox" id="spam-monitor-enabled"><span>Enable spam monitor</span><span class="hint">reply once when an identical msg repeats</span></label>
+                        </div>
+                        <div class="form-group">
+                            <label for="spam-threshold">Threshold <span class="hint">repeats</span></label>
+                            <input type="number" id="spam-threshold" min="1" value="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="spam-cooldown">Cooldown <span class="hint">sec · 0=off</span></label>
+                            <input type="number" id="spam-cooldown" min="0" value="90">
+                        </div>
+                        <div class="form-group span-2">
+                            <label class="check-line"><input type="checkbox" id="spam-attempt-delete" checked><span>Try delete</span><span class="hint">host-only · silent fallback</span></label>
+                        </div>
+                        <div class="form-group span-2">
+                            <label class="check-line"><input type="checkbox" id="spam-log-enabled" checked><span>Audit log</span><span class="hint">spam_log.jsonl</span></label>
+                        </div>
                     </div>
-                </div>
-            </fieldset>
+                </fieldset>
 
-        </form>
-        <div id="controls">
-            <button id="btn-start" class="btn btn-start">Start</button>
-            <button id="btn-stage" class="btn btn-stage">Stage</button>
-            <button id="btn-deploy" class="btn btn-deploy" disabled>Deploy All</button>
-            <button id="btn-stop" class="btn btn-stop" disabled>Stop</button>
-        </div>
-    </section>
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>reactions</legend>
+                    <div class="form-grid cols-2">
+                        <div class="form-group span-2">
+                            <label>Emojis</label>
+                            <div class="checkbox-row" id="reaction-checkboxes">
+                                <label><input type="checkbox" value="clap"><span>Clap</span></label>
+                                <label><input type="checkbox" value="thumbs_up"><span>Thumbs</span></label>
+                                <label><input type="checkbox" value="heart"><span>Heart</span></label>
+                                <label><input type="checkbox" value="laugh"><span>Laugh</span></label>
+                                <label><input type="checkbox" value="wow"><span>Wow</span></label>
+                                <label><input type="checkbox" value="tada"><span>Tada</span></label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="reaction-count">Count</label>
+                            <input type="number" id="reaction-count" min="0" value="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="reaction-delay">Delay <span class="hint">sec</span></label>
+                            <input type="number" id="reaction-delay" min="0.1" step="0.1" value="1.0">
+                        </div>
+                    </div>
+                </fieldset>
 
-    <!-- ── Live Stats ────────────────────────────────────────────────── -->
-    <section id="stats-panel" class="panel">
-        <h2>Live Stats</h2>
-        <div class="stat-grid">
-            <div class="stat-card stat-green">
-                <span class="stat-value" id="stat-joined">0</span>
-                <span class="stat-label">Joined</span>
-            </div>
-            <div class="stat-card stat-red">
-                <span class="stat-value" id="stat-failed">0</span>
-                <span class="stat-label">Failed</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-value" id="stat-total">0</span>
-                <span class="stat-label">Total</span>
-            </div>
-            <div class="stat-card stat-blue">
-                <span class="stat-value" id="stat-avg">—</span>
-                <span class="stat-label">Avg Time</span>
-            </div>
-            <div class="stat-card stat-blue">
-                <span class="stat-value" id="stat-fastest">—</span>
-                <span class="stat-label">Fastest</span>
-            </div>
-            <div class="stat-card stat-blue">
-                <span class="stat-value" id="stat-slowest">—</span>
-                <span class="stat-label">Slowest</span>
-            </div>
-        </div>
-    </section>
+                <fieldset class="form-section">
+                    <legend><span class="legend-dot"></span>flight modes</legend>
+                    <div class="toggle-grid">
+                        <div class="toggle-item">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="auto-restart">
+                                <span class="toggle-text">Auto Restart</span>
+                            </label>
+                            <div class="toggle-sub">
+                                <label for="restart-delay">delay</label>
+                                <input type="number" id="restart-delay" min="1" value="5" class="input-mini">
+                                <span class="hint">sec</span>
+                            </div>
+                        </div>
+                        <div class="toggle-item">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="persist-mode">
+                                <span class="toggle-text">Persist in Meeting</span>
+                            </label>
+                        </div>
+                        <div class="toggle-item">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="use-proxies">
+                                <span class="toggle-text">Proxy Rotation</span>
+                            </label>
+                        </div>
+                    </div>
+                </fieldset>
 
-    <!-- ── Bot Status Grid ───────────────────────────────────────────── -->
-    <section id="bots-panel" class="panel">
-        <h2>Bot Status</h2>
-        <div id="bot-grid"></div>
-        <p id="bot-placeholder" class="placeholder-text">Bots will appear here once launched.</p>
-    </section>
+            </form>
 
-    <!-- ── Two-column: Screenshots + Logs ─────────────────────────────── -->
-    <div class="two-col">
-        <!-- ── Screenshots ──────────────────────────────────────────── -->
-        <section id="screenshots-panel" class="panel">
-            <div class="log-header">
-                <h2>Screenshots</h2>
-                <button id="btn-refresh-screenshots" class="btn-small" title="Refresh">Refresh</button>
+            <div id="controls" class="controls">
+                <button id="btn-start"  class="btn btn-start"  type="button"><span class="btn-key">▶</span>Start</button>
+                <button id="btn-stage"  class="btn btn-stage"  type="button"><span class="btn-key">◐</span>Stage</button>
+                <button id="btn-deploy" class="btn btn-deploy" type="button" disabled><span class="btn-key">⇒</span>Deploy</button>
+                <button id="btn-stop"   class="btn btn-stop"   type="button" disabled><span class="btn-key">■</span>Stop</button>
             </div>
-            <div id="screenshot-grid"></div>
-            <p id="screenshot-placeholder" class="placeholder-text">Screenshots appear here during runs.</p>
+        </section>
+    </aside>
+
+    <!-- ── Ops Viewport ───────────────────────────────────────────── -->
+    <main class="ops-view">
+
+        <!-- Bot Status Grid -->
+        <section id="bots-panel" class="panel">
+            <div class="panel-head">
+                <span class="panel-tag">[ FLEET ]</span>
+                <h2>Bot Status</h2>
+                <span class="panel-meta" id="fleet-meta"></span>
+            </div>
+            <div id="bot-grid"></div>
+            <p id="bot-placeholder" class="placeholder-text">// fleet idle — launch a session to populate</p>
         </section>
 
-        <!-- ── Log Feed ──────────────────────────────────────────────── -->
-        <section id="log-panel" class="panel">
-            <div class="log-header">
-                <h2>Log Feed</h2>
-                <div class="log-toolbar">
-                    <button id="btn-clear-logs" class="btn-small" title="Clear logs">Clear</button>
-                    <button id="btn-download-logs" class="btn-small" title="Download logs">Download</button>
+        <!-- Two-column: Logs (priority) + Screenshots -->
+        <div class="two-col">
+            <section id="log-panel" class="panel">
+                <div class="panel-head">
+                    <span class="panel-tag">[ LOG ]</span>
+                    <h2>Telemetry Feed</h2>
+                    <div class="log-toolbar">
+                        <button id="btn-clear-logs" class="btn-small" type="button" title="Clear logs">clear</button>
+                        <button id="btn-download-logs" class="btn-small" type="button" title="Download logs">↓ save</button>
+                    </div>
                 </div>
-            </div>
-            <div id="log-container" role="log" aria-live="polite"></div>
-        </section>
-    </div>
+                <div id="log-container" role="log" aria-live="polite"></div>
+            </section>
 
-</main>
+            <section id="screenshots-panel" class="panel">
+                <div class="panel-head">
+                    <span class="panel-tag">[ FRAMES ]</span>
+                    <h2>Screenshots</h2>
+                    <button id="btn-refresh-screenshots" class="btn-small" type="button" title="Refresh">↻ refresh</button>
+                </div>
+                <div id="screenshot-grid"></div>
+                <p id="screenshot-placeholder" class="placeholder-text">// no frames captured</p>
+            </section>
+        </div>
+
+    </main>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
