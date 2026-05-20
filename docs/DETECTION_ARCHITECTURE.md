@@ -264,6 +264,13 @@ If those four hold, a default-flip plan may be authored under
 The owned-meeting test stays available as the stricter gate and
 remains the recommended path before flipping the default.
 
+The default-flip plan is at
+[`docs/FIBER_ONLY_DEFAULT_FLIP_PLAN.md`](FIBER_ONLY_DEFAULT_FLIP_PLAN.md).
+That document is a written plan — authoring it does NOT carry the
+implementation authorization. The operator must issue
+`APPROVE_STANDALONE_BOT_FIBER_ONLY_DEFAULT_FLIP_IMPLEMENTATION`
+separately before the on-disk default in `config.py` is changed.
+
 ---
 
 ## 7. Acceptance criteria for fiber-only readiness
