@@ -72,13 +72,74 @@ PY
 Expected outcomes:
 
 - `12/12 PASS` and exit 0 from the self-test.
-- `Ran 87 tests in <1s ... OK` from the unit suite (count grows
+- `Ran 104 tests in <2s ... OK` from the full suite (count grows
   forward, never shrinks).
 - `fiber_only` from the config print, unless you intentionally set
   `DETECTION_MODE=hybrid` in the shell.
 
 If any of these fail, treat as a regression. Stop, capture the
 output sanitized, and escalate per §7.
+
+## 3a. Normal operation workflow (health-gated launcher)
+
+Phase 9 added a small launcher that bundles the health gate with the
+dashboard start. It is the recommended way to operate the bot day to
+day — it never touches Zoom by itself, it never persists env vars, and
+it refuses to start the dashboard if the self-test fails.
+
+**Cross-platform launcher** (`tools/run_with_detection_health.py`):
+
+```bash
+# Health check only — no dashboard started
+python tools/run_with_detection_health.py --no-start
+
+# Health-gated start in default mode (honors on-disk fiber_only)
+python tools/run_with_detection_health.py --mode default
+
+# Health-gated start in hybrid rollback mode (one process only)
+python tools/run_with_detection_health.py --mode hybrid
+
+# Skip the health gate (NOT recommended)
+python tools/run_with_detection_health.py --mode default --force
+```
+
+**Windows operator wrappers** (`scripts/*.bat`):
+
+| Script                                       | What it does                                                                                       |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `scripts\fiber_health_check.bat`             | Runs the self-test only. Exits 0 on PASS, 1 on FAIL.                                                |
+| `scripts\start_dashboard_fiber_default.bat`  | Health-gated start with the on-disk default DETECTION_MODE (currently `fiber_only`).                |
+| `scripts\start_dashboard_hybrid_rollback.bat`| Health-gated start with `DETECTION_MODE=hybrid` for the child process only. Operator shell env untouched. |
+
+Each wrapper just delegates to the Python launcher; they exist so
+operators can double-click or schedule them without typing the full
+command.
+
+Exit codes from `run_with_detection_health.py`:
+
+- `0` — health pass + (if requested) dashboard exited cleanly.
+- `1` — health gate failed, dashboard NOT started.
+- `2` — bad arguments.
+- otherwise — the dashboard's own exit code.
+
+The launcher's env handling is deliberate:
+
+- `--mode default` **scrubs** `DETECTION_MODE` from the child env so
+  `config.py`'s on-disk default is honored. The operator's shell env
+  is not modified.
+- `--mode hybrid` **sets** `DETECTION_MODE=hybrid` in the child env
+  only. Same shell-env-not-modified guarantee.
+
+Recommended normal operation:
+
+1. Run `scripts\fiber_health_check.bat` (Windows) or
+   `python tools/run_with_detection_health.py --no-start`.
+2. If PASS → start with `scripts\start_dashboard_fiber_default.bat`
+   (or the Python launcher equivalent).
+3. Observe signals per §4 of this runbook.
+4. If a regression appears at runtime → stop the dashboard, switch
+   to `scripts\start_dashboard_hybrid_rollback.bat` for the same
+   session, then file evidence per §5-§7.
 
 ---
 
