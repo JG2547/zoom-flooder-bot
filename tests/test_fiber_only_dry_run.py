@@ -394,6 +394,11 @@ class TestPhase10Invariants(_DryRunBase):
         # Unique to the old get_participant_count toolbar badge scrape:
         self.assertNotIn(".footer-button-base__number", src)
         self.assertNotIn('participants-section-container [class*="title"]', src)
+        # Phase 5: legacy waiting-room XPATH list is gone — _in_waiting_room
+        # via bot_fiber.capture_meeting_state is the only path now.
+        self.assertNotIn("_WAITING_ROOM_SELECTORS = [", src)
+        self.assertNotIn("'host will admit you'", src)
+        self.assertNotIn("'Waiting for the host'", src)
 
     def test_bot_imports_bot_fiber(self):
         """The fiber adapter remains imported."""

@@ -382,6 +382,43 @@ def _check_alive_unsupported_safe_reprobe(checks, bot_mod, bot_fiber_mod):
     checks.append(chk)
 
 
+def _check_waiting_room_fiber_only(checks, bot_mod, bot_fiber_mod):
+    """Phase 5: ``_in_waiting_room`` reads the fiber meeting-state
+    probe and returns True/False/None — never touches DOM."""
+    chk = Check("waiting_room.fiber_only",
+                "_in_waiting_room reads inWaitingRoom from fiber only")
+    try:
+        # OK + inWaitingRoom=true → True
+        fr_in = bot_fiber_mod.FiberResult.ok_result(
+            {"inMeeting": False, "inWaitingRoom": True,
+             "meetingEnded": False, "rawKeys": []}
+        )
+        # OK + inWaitingRoom=false → False
+        fr_admitted = bot_fiber_mod.FiberResult.ok_result(
+            {"inMeeting": True, "inWaitingRoom": False,
+             "meetingEnded": False, "rawKeys": []}
+        )
+        # UNSUPPORTED → None
+        fr_unsup = bot_fiber_mod.FiberResult.unsupported("no WR fiber", {})
+
+        with _patched_capture(bot_fiber_mod, meeting_state=fr_in):
+            in_wr = bot_mod._in_waiting_room(FakeFiberDriver())
+        with _patched_capture(bot_fiber_mod, meeting_state=fr_admitted):
+            admitted = bot_mod._in_waiting_room(FakeFiberDriver())
+        with _patched_capture(bot_fiber_mod, meeting_state=fr_unsup):
+            unknown = bot_mod._in_waiting_room(FakeFiberDriver())
+
+        ok = (in_wr is True and admitted is False and unknown is None)
+        chk.record(
+            "(True, False, None)",
+            f"({in_wr}, {admitted}, {unknown})",
+            ok,
+        )
+    except Exception as exc:
+        chk.record("(True, False, None)", repr(exc), False, error=str(exc))
+    checks.append(chk)
+
+
 def _check_default_restored(checks, config_mod, expected):
     """After all the checks above ran inside _fiber_only_mode, the
     context manager restores the prior value. Verify that restored value
@@ -430,6 +467,7 @@ def run_self_test() -> Tuple[List[Check], bool]:
         _check_alive_meeting_ended(checks, bot_mod, bot_fiber_mod)
         _check_alive_off_zoom(checks, bot_mod, bot_fiber_mod)
         _check_alive_unsupported_safe_reprobe(checks, bot_mod, bot_fiber_mod)
+        _check_waiting_room_fiber_only(checks, bot_mod, bot_fiber_mod)
 
     _check_default_restored(checks, config_mod, pre_test_mode)
     all_passed = all(c.passed for c in checks)

@@ -55,6 +55,31 @@ if getattr(_bot_config, "DETECTION_MODE", "fiber_only") == "hybrid":
         "behaviour. See docs/FIBER_ONLY_REMOVE_LEGACY_DOM_PATHS_PLAN.md."
     )
 
+
+def _in_waiting_room(driver):
+    """Fiber-only waiting-room probe (Phase 5).
+
+    Returns ``True``  if fiber reports the bot is in the waiting room,
+    ``False`` if fiber reports it is admitted / in the meeting,
+    ``None`` if the fiber probe is unsupported / empty / timed out.
+
+    Callers should treat ``None`` as conservative "still in WR" so the
+    join flow keeps polling rather than declaring admission without
+    proof. Source rollback is required to restore the legacy XPATH
+    helper; ``DETECTION_MODE=hybrid`` env override does NOT
+    reintroduce the DOM path.
+    """
+    result = bot_fiber.capture_meeting_state(driver)
+    if not result.is_ok:
+        if result.error:
+            log.debug(
+                "fiber waiting-room probe returned %s: %s",
+                result.outcome.value, result.error,
+            )
+        return None
+    data = result.data or {}
+    return bool(data.get("inWaitingRoom"))
+
 # ── Screenshot directory ─────────────────────────────────────────────────
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
@@ -290,13 +315,11 @@ _ERROR_SELECTORS = [
 ]
 
 # ── Waiting room detection ─────────────────────────────────────────────────
-_WAITING_ROOM_SELECTORS = [
-    (By.XPATH, "//*[contains(text(), 'host will admit you')]"),
-    (By.XPATH, "//*[contains(text(), 'Waiting for the host')]"),
-    (By.XPATH, "//*[contains(text(), 'Host has joined')]"),
-    (By.XPATH, "//*[contains(text(), 'will let you in soon')]"),
-    (By.XPATH, "//*[contains(text(), \"Please wait, the meeting host\")]"),
-]
+# Phase 5: the legacy `_WAITING_ROOM_SELECTORS` XPATH list (5 en-US
+# text matches) was removed. Use ``_in_waiting_room(driver)`` instead,
+# which calls ``bot_fiber.capture_meeting_state`` and reads the
+# ``inWaitingRoom`` field. Source revert is the only way back to the
+# legacy XPATH path.
 
 # ── Captcha / challenge detection ─────────────────────────────────────────
 _CAPTCHA_SELECTORS = [
@@ -1008,8 +1031,8 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                 elapsed = time.monotonic() - t_start
                 return ("captcha", elapsed)
 
-            # ── Check for waiting room ──────────────────────────────────
-            in_waiting_room = _find_element_multi(driver, _WAITING_ROOM_SELECTORS)
+            # ── Check for waiting room (fiber-only per Phase 5) ────────
+            in_waiting_room = _in_waiting_room(driver)
             if in_waiting_room:
                 log.info("Bot %d: In waiting room, waiting for host admission…", bot_id + 1)
                 if status_callback:
@@ -1021,7 +1044,11 @@ def launch_bot(bot_id, meeting_id, passcode, names_list, custom_name="",
                         quit_driver(driver); driver = None
                         return (None, time.monotonic() - t_start)
                     time.sleep(2)
-                    if not _find_element_multi(driver, _WAITING_ROOM_SELECTORS):
+                    # `_in_waiting_room` returns False on admission and
+                    # None on fiber-probe miss. Only an explicit False
+                    # admits — None keeps the bot polling so it never
+                    # declares admission without proof.
+                    if _in_waiting_room(driver) is False:
                         log.info("Bot %d: Admitted from waiting room.", bot_id + 1)
                         break
                 else:

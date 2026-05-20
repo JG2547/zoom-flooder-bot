@@ -1,0 +1,12 @@
+{
+    "outcome": "OK",
+    "elapsedMs": 9,
+    "data": {
+        "inMeeting": false,
+        "inWaitingRoom": true,
+        "meetingEnded": false,
+        "leaveButtonVisible": false,
+        "errorCode": null,
+        "rawKeys": ["meetingNumber", "meetingStatus", "inWaitingRoom"]
+    }
+}
