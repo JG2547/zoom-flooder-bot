@@ -205,6 +205,13 @@ you own and can stop instantly. The Phase 4 harness validates the
 mapping logic; only a controlled live meeting can validate that fiber
 state is actually present in the Zoom Web SDK build you are targeting.
 
+For the controlled owned-meeting procedure, see the no-execution
+checklist at
+[`docs/FIBER_ONLY_OWNED_MEETING_SMOKE_TEST.md`](FIBER_ONLY_OWNED_MEETING_SMOKE_TEST.md).
+That document is a written plan and requires
+`APPROVE_STANDALONE_BOT_FIBER_ONLY_OWNED_MEETING_SMOKE_TEST_EXECUTION`
+to actually run.
+
 ---
 
 ## 7. Acceptance criteria for fiber-only readiness
